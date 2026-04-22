@@ -565,7 +565,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
     month_selected = selected_month != "Todos"
     range_value = f"{year}-{selected_month}" if month_selected else str(year)
     visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
-    height = 340 if month_selected else 280
+    height = 300 if month_selected else 280
 
     option = {
         "backgroundColor": "rgba(0,0,0,0)",
@@ -605,25 +605,23 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             },
             "formatter": """__JS__function (params) {
                 const d = params.data || {};
-                const blocks = (d.projectBlocks || []).map((block) => {
+                const blocks = (d.projectBlocks || []).map((block, idx) => {
                     const lines = [
                         '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
                     ];
                     if (block.torres) lines.push('<div>' + block.torres + '</div>');
                     if (block.apartamentos) lines.push('<div>' + block.apartamentos + '</div>');
                     if (block.locales) lines.push('<div>' + block.locales + '</div>');
-                    return '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.22);">'
+                    lines.push('<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
+                        + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
+                        + '</div>');
+                    const separator = idx === 0 ? '' : 'margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.28);';
+                    return '<div style="' + separator + '">'
                         + lines.join('')
                         + '</div>';
                 }).join('');
                 return '<div style="font-family:Manrope,sans-serif;line-height:1.5;">'
                     + '<div style="font-weight:800;margin-bottom:6px;">' + (d.fecha || params.value[0]) + '</div>'
-                    + '<div>Total CTOs: <b>' + (d.total || 0) + '</b></div>'
-                    + '<div>Firmados: <b>' + (d.firmados || 0) + '</b></div>'
-                    + '<div>' + ((d.allSigned) ? '<span style="color:#A7F3D0;font-weight:800;">Todo firmado</span>' : '<span style="color:#FCA5A5;font-weight:800;">Con firmas pendientes</span>') + '</div>'
-                    + '<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
-                    + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
-                    + '</div>'
                     + blocks
                     + '</div>';
             }""",
@@ -645,8 +643,8 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "splitLine": {
                 "show": True,
                 "lineStyle": {
-                    "color": "#D7E0EA",
-                    "width": 1,
+                    "color": "#B8C7D8",
+                    "width": 1.2,
                 },
             },
             "itemStyle": {
@@ -742,7 +740,7 @@ def render_heatmap_section(filtered: pd.DataFrame, selected_year: int, selected_
             )
             return
 
-        left, center, right = st.columns([0.2, 0.6, 0.2])
+        left, center, right = st.columns([0.3, 0.4, 0.3])
         with center:
             option, height = build_heatmap_option(agg_df, selected_year, selected_month)
             render_echarts(option, height=height)

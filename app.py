@@ -750,7 +750,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
                 if (d.emptyCell) return '';
                 const blocks = (d.projectBlocks || []).map((block, idx) => {
                     const lines = [
-                        '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
+                        '<div style="font-weight:800;color:#F8FAFC;">' + (block.proyecto || '-') + '</div>'
                     ];
                     if (block.torres) lines.push('<div>' + block.torres + '</div>');
                     if (block.locales) lines.push('<div>' + block.locales + '</div>');
@@ -935,7 +935,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
                 const d = params.data || {};
                 const blocks = (d.projectBlocks || []).map((block, idx) => {
                     const lines = [
-                        '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
+                        '<div style="font-weight:800;color:#F8FAFC;">' + (block.proyecto || '-') + '</div>'
                     ];
                     if (block.torres) lines.push('<div>' + block.torres + '</div>');
                     if (block.locales) lines.push('<div>' + block.locales + '</div>');

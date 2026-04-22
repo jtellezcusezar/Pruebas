@@ -1,16 +1,14 @@
 import html
+import json
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import load_workbook
 from zoneinfo import ZoneInfo
-
-try:
-    from streamlit_calendar import calendar as render_calendar
-except ImportError:
-    render_calendar = None
 
 
 st.set_page_config(
@@ -199,44 +197,6 @@ def inject_base_styles() -> None:
         }
         .legend-signed { background: #6BBF9E; }
         .legend-unsigned { background: #D98B8B; }
-        .detail-card {
-            background: #FFFFFF;
-            border: 1px solid #E5E9F0;
-            border-radius: 14px;
-            padding: 16px 18px;
-            box-shadow: 0 1px 4px rgba(15, 23, 42, .05);
-            margin-top: 12px;
-        }
-        .detail-title {
-            font-size: 16px;
-            font-weight: 800;
-            color: #111827;
-            margin-bottom: 6px;
-        }
-        .detail-sub {
-            font-size: 12px;
-            color: #6B7280;
-            margin-bottom: 14px;
-        }
-        .detail-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 14px;
-        }
-        .detail-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: .06em;
-            color: #9CA3AF;
-            font-weight: 800;
-            margin-bottom: 6px;
-        }
-        .detail-value {
-            font-size: 13px;
-            color: #111827;
-            line-height: 1.5;
-            white-space: pre-wrap;
-        }
         .table-shell {
             overflow-x: auto;
             border-radius: 10px;
@@ -284,9 +244,6 @@ def inject_base_styles() -> None:
             color: #8F3942;
             font-size: 12px;
             font-weight: 800;
-        }
-        @media (max-width: 900px) {
-            .detail-grid { grid-template-columns: 1fr; }
         }
         </style>
         """,
@@ -403,145 +360,221 @@ def get_nearest_date(df: pd.DataFrame) -> pd.Timestamp | None:
     return min(valid_dates, key=lambda item: abs(item.normalize() - today))
 
 
-def ensure_view_date(df: pd.DataFrame, selected_project: str) -> None:
-    prev_project = st.session_state.get("ctos_selected_project_prev")
-    current_view = st.session_state.get("ctos_view_date")
-
-    if prev_project == selected_project and current_view:
-        return
-
-    target_df = df if selected_project == "Todos" else df[df["Proyecto"] == selected_project]
-    nearest_date = get_nearest_date(target_df)
-
-    if nearest_date is not None:
-        st.session_state["ctos_view_date"] = nearest_date.strftime("%Y-%m-%d")
-    elif current_view is None:
-        st.session_state["ctos_view_date"] = datetime.now(BOGOTA_TZ).strftime("%Y-%m-%d")
-
-    st.session_state["ctos_selected_project_prev"] = selected_project
-
-
-def aggregate_calendar_events(df: pd.DataFrame) -> list[dict]:
+def aggregate_daily_data(df: pd.DataFrame) -> pd.DataFrame:
     rows = df[df["Fecha actual"].notna()].copy()
     if rows.empty:
+        return pd.DataFrame()
+
+    rows["Fecha_dia"] = rows["Fecha actual"].dt.normalize()
+    grouped_rows = []
+
+    for event_date, group in rows.groupby("Fecha_dia", sort=True):
+        project_summary = (
+            group.groupby("Proyecto", sort=True)
+            .agg(
+                total=("Proyecto", "size"),
+                firmados=("Firmado", lambda s: int((s == 1).sum())),
+                pendientes=("Firmado", lambda s: int((s == 0).sum())),
+            )
+            .reset_index()
+        )
+        project_summary["resumen"] = project_summary.apply(
+            lambda row: f"{row['Proyecto']} ({int(row['total'])})", axis=1
+        )
+
+        towers = sorted(
+            {
+                str(value).strip()
+                for value in group["Torre_display"].tolist()
+                if str(value).strip() and str(value).strip() != "-"
+            }
+        )
+        units = sorted({str(value).strip() for value in group["Unidad"].tolist() if str(value).strip()})
+        total = int(len(group))
+        signed = int((group["Firmado"] == 1).sum())
+        pending = int((group["Firmado"] == 0).sum())
+        pending_ratio = pending / total if total else 0
+
+        grouped_rows.append(
+            {
+                "Fecha_dia": event_date,
+                "fecha_iso": event_date.strftime("%Y-%m-%d"),
+                "fecha_label": format_short_date(event_date),
+                "total": total,
+                "firmados": signed,
+                "pendientes": pending,
+                "pending_ratio": pending_ratio,
+                "intensity": pending * 100 + total,
+                "proyectos": project_summary["resumen"].tolist(),
+                "proyectos_con_pendientes": project_summary.loc[project_summary["pendientes"] > 0, "resumen"].tolist(),
+                "torres": towers,
+                "unidades": units,
+                "fecha_anterior_min": format_short_date(group["Fecha anterior"].min()),
+                "fecha_anterior_max": format_short_date(group["Fecha anterior"].max()),
+            }
+        )
+
+    return pd.DataFrame(grouped_rows)
+
+
+def event_status_label(row: pd.Series) -> str:
+    if row["pendientes"] == 0:
+        return "Todo firmado"
+    if row["firmados"] == 0:
+        return "Todo pendiente"
+    return "Mixto"
+
+
+def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
+    if agg_df.empty:
         return []
 
-    grouped = (
-        rows.groupby(["Proyecto", rows["Fecha actual"].dt.normalize()], dropna=False)
-        .apply(build_event_payload)
-        .tolist()
-    )
-    return grouped
+    items = []
+    for _, row in agg_df.iterrows():
+        items.append(
+            {
+                "value": [row["fecha_iso"], int(row["intensity"])],
+                "fecha": row["fecha_label"],
+                "total": int(row["total"]),
+                "firmados": int(row["firmados"]),
+                "pendientes": int(row["pendientes"]),
+                "estado": event_status_label(row),
+                "proyectos": row["proyectos"],
+                "proyectosPendientes": row["proyectos_con_pendientes"],
+                "torres": row["torres"],
+                "unidades": row["unidades"],
+                "fechaAnteriorMin": row["fecha_anterior_min"],
+                "fechaAnteriorMax": row["fecha_anterior_max"],
+            }
+        )
+    return items
 
 
-def build_event_payload(group: pd.DataFrame) -> dict:
-    group_name = getattr(group, "name", ("", pd.NaT))
-    project = str(group_name[0]) if isinstance(group_name, tuple) else str(group_name)
-    event_date = group_name[1] if isinstance(group_name, tuple) and len(group_name) > 1 else group["Fecha actual"].iloc[0].normalize()
-    signed_count = int((group["Firmado"] == 1).sum())
-    pending_count = int((group["Firmado"] == 0).sum())
-    towers = sorted({str(value).strip() for value in group["Torre_display"].tolist() if str(value).strip() and str(value).strip() != "-"})
-    units = sorted({str(value).strip() for value in group["Unidad"].tolist() if str(value).strip()})
-
-    all_signed = pending_count == 0
-    detail_lines = []
-    if towers:
-        detail_lines.append(f"Torres/ZC: {', '.join(towers)}")
-    if units:
-        detail_lines.append(f"Unidades: {', '.join(units)}")
-
-    return {
-        "id": f"{project}|{event_date.strftime('%Y-%m-%d')}",
-        "title": project,
-        "start": event_date.strftime("%Y-%m-%d"),
-        "allDay": True,
-        "backgroundColor": "#E4F4EE" if all_signed else "#F8E8E8",
-        "borderColor": "#6BBF9E" if all_signed else "#D98B8B",
-        "textColor": "#2F6F58" if all_signed else "#8F3942",
-        "extendedProps": {
-            "proyecto": project,
-            "fecha_actual": format_short_date(group.iloc[0]["Fecha actual"]),
-            "fecha_anterior_min": format_short_date(group["Fecha anterior"].min()),
-            "fecha_anterior_max": format_short_date(group["Fecha anterior"].max()),
-            "firmados": signed_count,
-            "pendientes": pending_count,
-            "torres": towers,
-            "unidades": units,
-            "detalle": "\n".join(detail_lines) if detail_lines else "Sin torres o unidades detalladas",
-            "estado": "Firmado" if all_signed else "Con pendientes",
-            "total_registros": len(group),
-        },
-    }
-
-
-def calendar_custom_css() -> str:
-    return """
-    .fc {
-        font-family: 'Manrope', sans-serif;
-        color: #111827;
-    }
-    .fc-toolbar.fc-header-toolbar {
-        margin-bottom: 1rem;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-    .fc-toolbar-title {
-        font-size: 1.1rem;
-        font-weight: 800;
-        color: #111827;
-    }
-    .fc-button {
-        background: #FFFFFF !important;
-        color: #4A7BA8 !important;
-        border: 1px solid #D5E2F0 !important;
-        border-radius: 10px !important;
-        box-shadow: none !important;
-        font-weight: 700 !important;
-        text-transform: capitalize !important;
-    }
-    .fc-button-primary:not(:disabled).fc-button-active,
-    .fc-button-primary:not(:disabled):active,
-    .fc-button:hover {
-        background: #EEF3FA !important;
-        border-color: #7BA7D4 !important;
-        color: #355D8A !important;
-    }
-    .fc-theme-standard td,
-    .fc-theme-standard th,
-    .fc-theme-standard .fc-scrollgrid {
-        border-color: #E5E9F0;
-    }
-    .fc-col-header-cell-cushion {
-        color: #9CA3AF;
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-        padding: 10px 4px;
-    }
-    .fc-daygrid-day-number {
-        color: #6B7280;
-        font-family: 'DM Mono', monospace;
-        font-size: 12px;
-        font-weight: 700;
-    }
-    .fc-day-today {
-        background: #F4F8FD !important;
-    }
-    .fc-daygrid-event {
-        border-radius: 8px;
-        padding: 2px 4px;
-        font-size: 11px;
-        font-weight: 700;
-    }
-    .fc-event-title {
-        font-weight: 800;
-    }
-    .fc-daygrid-more-link {
-        color: #4A7BA8;
-        font-weight: 700;
-    }
+def render_echarts(option: dict, height: int = 420) -> None:
+    chart_id = f"echarts-{uuid4().hex}"
+    option_json = json.dumps(option, ensure_ascii=False)
+    html_code = f"""
+    <div id="{chart_id}" style="width:100%;height:{height}px;"></div>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script>
+      function reviveJsFns(obj) {{
+        if (Array.isArray(obj)) {{
+          return obj.map(reviveJsFns);
+        }}
+        if (obj && typeof obj === 'object') {{
+          for (const key of Object.keys(obj)) {{
+            const value = obj[key];
+            if (typeof value === 'string' && value.startsWith('__JS__')) {{
+              obj[key] = eval('(' + value.slice(6) + ')');
+            }} else {{
+              obj[key] = reviveJsFns(value);
+            }}
+          }}
+        }}
+        return obj;
+      }}
+      const chart = echarts.init(document.getElementById('{chart_id}'));
+      const option = reviveJsFns({option_json});
+      chart.setOption(option);
+      window.addEventListener('resize', () => chart.resize());
+    </script>
     """
+    components.html(html_code, height=height, scrolling=False)
+
+
+def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -> tuple[dict, int]:
+    month_selected = selected_month != "Todos"
+    range_value = f"{year}-{selected_month}" if month_selected else str(year)
+    visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
+    calendar_height = 240 if month_selected else 180
+    height = 330 if month_selected else 260
+
+    option = {
+        "backgroundColor": "rgba(0,0,0,0)",
+        "tooltip": {
+            "position": "top",
+            "backgroundColor": "#111827",
+            "borderColor": "#334155",
+            "textStyle": {
+                "color": "#F8FAFC",
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 12,
+            },
+            "formatter": """__JS__function (params) {
+                const d = params.data || {};
+                const proyectos = (d.proyectos || []).slice(0, 8).join('<br/>• ');
+                const proyectosPendientes = (d.proyectosPendientes || []).slice(0, 8).join('<br/>• ');
+                const torres = (d.torres || []).slice(0, 10).join(', ');
+                const unidades = (d.unidades || []).slice(0, 10).join(', ');
+                return '<div style="font-family:Manrope,sans-serif;line-height:1.5;">'
+                    + '<div style="font-weight:800;margin-bottom:6px;">' + (d.fecha || params.value[0]) + '</div>'
+                    + '<div>Total CTOs: <b>' + (d.total || 0) + '</b></div>'
+                    + '<div>Firmados: <b>' + (d.firmados || 0) + '</b></div>'
+                    + '<div>Pendientes: <b>' + (d.pendientes || 0) + '</b></div>'
+                    + '<div>Estado del día: <b>' + (d.estado || '-') + '</b></div>'
+                    + '<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
+                    + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
+                    + '</div>'
+                    + (proyectos ? '<div style="margin-top:8px;"><b>Proyectos:</b><br/>• ' + proyectos + '</div>' : '')
+                    + (proyectosPendientes ? '<div style="margin-top:8px;"><b>Con pendientes:</b><br/>• ' + proyectosPendientes + '</div>' : '')
+                    + (torres ? '<div style="margin-top:8px;"><b>Torres/ZC:</b> ' + torres + '</div>' : '')
+                    + (unidades ? '<div style="margin-top:6px;"><b>Unidades:</b> ' + unidades + '</div>' : '')
+                    + '</div>';
+            }""",
+        },
+        "visualMap": {
+            "min": 0,
+            "max": visual_max,
+            "show": False,
+            "inRange": {
+                "color": ["#EEF3FA", "#D6E6F7", "#F7E7C6", "#EAB2B7", "#D98B8B"],
+            },
+        },
+        "calendar": {
+            "top": 50,
+            "left": 30,
+            "right": 20,
+            "range": range_value,
+            "cellSize": ["auto", 18 if month_selected else 16],
+            "splitLine": {"show": False},
+            "itemStyle": {
+                "borderWidth": 1,
+                "borderColor": "#E5E9F0",
+                "color": "#FAFBFC",
+            },
+            "yearLabel": {"show": False},
+            "monthLabel": {
+                "nameMap": "es",
+                "color": "#6B7280",
+                "fontFamily": "Manrope, sans-serif",
+                "fontWeight": 700,
+            },
+            "dayLabel": {
+                "firstDay": 0,
+                "nameMap": ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"],
+                "color": "#9CA3AF",
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 11,
+                "fontWeight": 700,
+            },
+        },
+        "series": [
+            {
+                "type": "heatmap",
+                "coordinateSystem": "calendar",
+                "data": build_heatmap_series(agg_df),
+                "label": {"show": False},
+                "emphasis": {
+                    "itemStyle": {
+                        "shadowBlur": 10,
+                        "shadowColor": "rgba(74,123,168,0.25)",
+                        "borderColor": "#4A7BA8",
+                    }
+                },
+            }
+        ],
+    }
+    return option, height
 
 
 def build_pending_table_html(data: pd.DataFrame) -> str:
@@ -566,95 +599,28 @@ def build_pending_table_html(data: pd.DataFrame) -> str:
     )
 
 
-def render_selected_event_detail(calendar_response: dict | None) -> None:
-    if not calendar_response or calendar_response.get("callback") != "eventClick":
+def render_heatmap_section(filtered: pd.DataFrame, selected_year: int, selected_month: str) -> None:
+    agg_df = aggregate_daily_data(filtered)
+    if agg_df.empty:
         st.markdown(
-            '<div class="info-note">Haz clic sobre un proyecto en el calendario para ver el detalle de torres, unidades y firmas de esa fecha.</div>',
+            '<div class="info-note">No hay fechas programadas para los filtros seleccionados.</div>',
             unsafe_allow_html=True,
         )
         return
 
-    event = calendar_response.get("eventClick", {}).get("event", {})
-    details = event.get("extendedProps", {})
-    title = details.get("proyecto", event.get("title", "Detalle"))
-    subtitle = f"Fecha actual: {details.get('fecha_actual', '-')} · Registros: {details.get('total_registros', 0)}"
+    agg_df = agg_df[agg_df["Fecha_dia"].dt.year == selected_year].copy()
+    if selected_month != "Todos":
+        agg_df = agg_df[agg_df["Fecha_dia"].dt.month == int(selected_month)].copy()
 
-    st.markdown(
-        f"""
-        <div class="detail-card">
-            <div class="detail-title">{html.escape(title)}</div>
-            <div class="detail-sub">{html.escape(subtitle)}</div>
-            <div class="detail-grid">
-                <div>
-                    <div class="detail-label">Torres / ZC</div>
-                    <div class="detail-value">{html.escape(as_text_list(details.get('torres', [])))}</div>
-                </div>
-                <div>
-                    <div class="detail-label">Unidades</div>
-                    <div class="detail-value">{html.escape(as_text_list(details.get('unidades', [])))}</div>
-                </div>
-                <div>
-                    <div class="detail-label">Firmados</div>
-                    <div class="detail-value">{details.get('firmados', 0)}</div>
-                </div>
-                <div>
-                    <div class="detail-label">Pendientes</div>
-                    <div class="detail-value">{details.get('pendientes', 0)}</div>
-                </div>
-                <div>
-                    <div class="detail-label">Fecha anterior mas temprana</div>
-                    <div class="detail-value">{html.escape(details.get('fecha_anterior_min', '-'))}</div>
-                </div>
-                <div>
-                    <div class="detail-label">Fecha anterior mas tardia</div>
-                    <div class="detail-value">{html.escape(details.get('fecha_anterior_max', '-'))}</div>
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_calendar_section(filtered: pd.DataFrame) -> None:
-    if render_calendar is None:
-        st.error("Falta instalar `streamlit-calendar`. Agrega esta dependencia al entorno antes de probar esta vista.")
-        st.code("pip install streamlit-calendar")
+    if agg_df.empty:
+        st.markdown(
+            '<div class="info-note">No hay fechas programadas en el periodo seleccionado.</div>',
+            unsafe_allow_html=True,
+        )
         return
 
-    ensure_view_date(filtered, st.session_state["ctos_selected_project"])
-    events = aggregate_calendar_events(filtered)
-
-    calendar_options = {
-        "initialView": "dayGridMonth",
-        "initialDate": st.session_state.get("ctos_view_date"),
-        "locale": "es",
-        "height": 760,
-        "headerToolbar": {
-            "left": "prev,next today",
-            "center": "title",
-            "right": "dayGridMonth,listMonth",
-        },
-        "buttonText": {
-            "today": "Hoy",
-            "month": "Mes",
-            "list": "Lista",
-        },
-        "dayMaxEventRows": 3,
-        "eventDisplay": "block",
-        "displayEventTime": False,
-        "fixedWeekCount": False,
-        "showNonCurrentDates": True,
-    }
-
-    calendar_response = render_calendar(
-        events=events,
-        options=calendar_options,
-        custom_css=calendar_custom_css(),
-        callbacks=["eventClick"],
-        key=f"ctos_calendar_{st.session_state.get('ctos_view_date', 'default')}_{st.session_state['ctos_selected_project']}",
-    )
-    render_selected_event_detail(calendar_response)
+    option, height = build_heatmap_option(agg_df, selected_year, selected_month)
+    render_echarts(option, height=height)
 
 
 def render_dashboard(df: pd.DataFrame) -> None:
@@ -671,12 +637,25 @@ def render_dashboard(df: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
+    valid_dates = df["Fecha actual"].dropna()
+    nearest_date = get_nearest_date(df)
+    nearest_year = nearest_date.year if nearest_date is not None else datetime.now(BOGOTA_TZ).year
+    available_years = sorted(valid_dates.dt.year.unique().tolist()) if not valid_dates.empty else [nearest_year]
+    month_options = ["Todos"] + [f"{month:02d}" for month in range(1, 13)]
+    month_labels = {"Todos": "Todos"} | {f"{month:02d}": MONTHS_ES[month] for month in range(1, 13)}
+
     projects = ["Todos"] + sorted(df["Proyecto"].dropna().unique().tolist())
     default_project = st.session_state.get("ctos_selected_project", "Todos")
     if default_project not in projects:
         default_project = "Todos"
+    default_year = st.session_state.get("ctos_selected_year", nearest_year)
+    if default_year not in available_years:
+        default_year = nearest_year
+    default_month = st.session_state.get("ctos_selected_month", "Todos")
+    if default_month not in month_options:
+        default_month = "Todos"
 
-    filter_col, legend_col = st.columns([2.2, 1.8])
+    filter_col, year_col, month_col, legend_col = st.columns([2.0, 1.0, 1.2, 1.8])
     with filter_col:
         selected_project = st.selectbox(
             "Proyecto",
@@ -684,12 +663,27 @@ def render_dashboard(df: pd.DataFrame) -> None:
             index=projects.index(default_project),
             key="ctos_selected_project",
         )
+    with year_col:
+        selected_year = st.selectbox(
+            "Año",
+            available_years,
+            index=available_years.index(default_year),
+            key="ctos_selected_year",
+        )
+    with month_col:
+        selected_month = st.selectbox(
+            "Mes",
+            month_options,
+            index=month_options.index(default_month),
+            format_func=lambda value: month_labels[value],
+            key="ctos_selected_month",
+        )
     with legend_col:
         st.markdown(
             """
             <div class="legend-wrap">
-                <div class="legend-item"><span class="legend-dot legend-signed"></span>Todo firmado</div>
-                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Con pendientes</div>
+                <div class="legend-item"><span class="legend-dot legend-signed"></span>Menor presión</div>
+                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Mayor presión</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -698,6 +692,9 @@ def render_dashboard(df: pd.DataFrame) -> None:
     filtered = df.copy()
     if selected_project != "Todos":
         filtered = filtered[filtered["Proyecto"] == selected_project].copy()
+    filtered = filtered[filtered["Fecha actual"].dt.year == selected_year].copy()
+    if selected_month != "Todos":
+        filtered = filtered[filtered["Fecha actual"].dt.month == int(selected_month)].copy()
 
     total = len(filtered)
     signed = int((filtered["Firmado"] == 1).sum())
@@ -713,12 +710,12 @@ def render_dashboard(df: pd.DataFrame) -> None:
 
     st.markdown(
         section_header(
-            "Calendario de CTOs",
-            "Cada evento representa un proyecto en una fecha. Haz clic sobre el evento para ver torres y unidades asociadas.",
+            "Heatmap de CTOs",
+            "Vista anual por defecto. Al elegir un mes, el heatmap cambia a una lectura mensual con detalle agregado por fecha.",
         ),
         unsafe_allow_html=True,
     )
-    render_calendar_section(filtered)
+    render_heatmap_section(df if selected_project == "Todos" else df[df["Proyecto"] == selected_project].copy(), selected_year, selected_month)
 
     pending_df = filtered[filtered["Firmado"] == 0].copy()
     pending_df = pending_df.sort_values(

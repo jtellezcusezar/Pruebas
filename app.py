@@ -516,16 +516,10 @@ def summarize_project_group(project: str, group: pd.DataFrame) -> dict:
         }
     )
 
-    project_label = project
-    if towers:
-        project_label = f"{project} · Torre {', '.join(towers[:8])}"
-        if len(towers) > 8:
-            project_label += f" +{len(towers) - 8}"
-
     return {
-        "proyecto": project_label,
-        "torres": compact_numeric_tokens(towers, "Torres", max_items=10) if towers else "",
-        "locales": compact_numeric_tokens(locals_list, "Locales", max_items=10) if locals_list else "",
+        "proyecto": project,
+        "torres": compact_numeric_tokens(towers, "Torre", max_items=10) if towers else "",
+        "locales": compact_numeric_tokens(locals_list, "Local", max_items=10) if locals_list else "",
         "firmados": int((group["Firmado"] == 1).sum()),
         "total": int(len(group)),
     }

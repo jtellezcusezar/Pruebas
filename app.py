@@ -407,10 +407,11 @@ def load_cto_data(_signature: tuple[int, int]) -> pd.DataFrame:
     df.columns = [str(col).strip() for col in df.columns]
     df = df.rename(columns={"Torre/ZC": "Torre"})
 
-    for col in ["Proyecto", "Torre"]:
-        df[col] = df[col].fillna("").astype(str).str.strip()
+    for col in ["Lugar", "Proyecto", "Torre"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str).str.strip()
 
-    for col in ["Apartamento", "Local"]:
+    for col in ["Local"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -420,16 +421,16 @@ def load_cto_data(_signature: tuple[int, int]) -> pd.DataFrame:
     df["Firmado"] = pd.to_numeric(df["Firmado"], errors="coerce").fillna(0).astype(int)
     df["Unidad"] = df.apply(build_unit_label, axis=1)
     df["Torre_display"] = df["Torre"].replace("", "-")
+    if "Lugar" not in df.columns:
+        df["Lugar"] = ""
+    df["Lugar_display"] = df["Lugar"].replace("", "-")
     df["Proyecto_key"] = df["Proyecto"].str.strip()
-    df = df.sort_values(["Fecha actual", "Proyecto", "Torre_display", "Unidad"], na_position="last").reset_index(drop=True)
+    df = df.sort_values(["Fecha actual", "Lugar_display", "Proyecto", "Torre_display", "Unidad"], na_position="last").reset_index(drop=True)
     return df
 
 
 def build_unit_label(row: pd.Series) -> str:
-    apartamento = row.get("Apartamento")
     local = row.get("Local")
-    if pd.notna(apartamento):
-        return f"Apto {format_number(apartamento)}"
     if pd.notna(local):
         return f"Local {format_number(local)}"
     return ""
@@ -503,12 +504,6 @@ def summarize_project_group(project: str, group: pd.DataFrame) -> dict:
             if str(value).strip() and str(value).strip() != "-"
         }
     )
-    apartments = sorted(
-        {
-            format_number(value)
-            for value in group["Apartamento"].dropna().tolist()
-        }
-    )
     locals_list = sorted(
         {
             format_number(value)
@@ -516,17 +511,15 @@ def summarize_project_group(project: str, group: pd.DataFrame) -> dict:
         }
     )
 
-    has_apartments = bool(apartments)
     project_label = project
-    if has_apartments and towers:
+    if towers:
         project_label = f"{project} · Torre {', '.join(towers[:8])}"
         if len(towers) > 8:
             project_label += f" +{len(towers) - 8}"
 
     return {
         "proyecto": project_label,
-        "torres": compact_numeric_tokens(towers, "Torres", max_items=10) if towers and not has_apartments else "",
-        "apartamentos": compact_numeric_tokens(apartments, "Apartamentos", max_items=10) if apartments else "",
+        "torres": compact_numeric_tokens(towers, "Torres", max_items=10) if towers else "",
         "locales": compact_numeric_tokens(locals_list, "Locales", max_items=10) if locals_list else "",
         "firmados": int((group["Firmado"] == 1).sum()),
         "total": int(len(group)),
@@ -761,7 +754,6 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
                         '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
                     ];
                     if (block.torres) lines.push('<div>' + block.torres + '</div>');
-                    if (block.apartamentos) lines.push('<div>' + block.apartamentos + '</div>');
                     if (block.locales) lines.push('<div>' + block.locales + '</div>');
                     lines.push('<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
                         + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
@@ -947,7 +939,6 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
                         '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
                     ];
                     if (block.torres) lines.push('<div>' + block.torres + '</div>');
-                    if (block.apartamentos) lines.push('<div>' + block.apartamentos + '</div>');
                     if (block.locales) lines.push('<div>' + block.locales + '</div>');
                     lines.push('<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
                         + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
@@ -1104,7 +1095,15 @@ def render_dashboard(df: pd.DataFrame) -> None:
     month_options = ["Todos"] + [f"{month:02d}" for month in range(1, 13)]
     month_labels = {"Todos": "Todos"} | {f"{month:02d}": MONTHS_ES[month] for month in range(1, 13)}
 
-    projects = ["Todos"] + sorted(df["Proyecto"].dropna().unique().tolist())
+    places = ["Todos"] + sorted([value for value in df["Lugar"].dropna().unique().tolist() if str(value).strip()])
+    projects_base = df.copy()
+    default_place = st.session_state.get("ctos_selected_lugar", "Todos")
+    if default_place not in places:
+        default_place = "Todos"
+    if default_place != "Todos":
+        projects_base = projects_base[projects_base["Lugar"] == default_place].copy()
+
+    projects = ["Todos"] + sorted(projects_base["Proyecto"].dropna().unique().tolist())
     default_project = st.session_state.get("ctos_selected_project", "Todos")
     if default_project not in projects:
         default_project = "Todos"
@@ -1225,8 +1224,15 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
             unsafe_allow_html=True,
         )
 
-    filter_col, year_col, month_col, legend_col = st.columns(4, gap="small")
-    with filter_col:
+    place_col, project_col, year_col, month_col, legend_col = st.columns([0.85, 0.85, 0.7, 0.7, 1.0], gap="small")
+    with place_col:
+        selected_place = st.selectbox(
+            "Lugar",
+            places,
+            index=places.index(default_place),
+            key="ctos_selected_lugar",
+        )
+    with project_col:
         selected_project = st.selectbox(
             "Proyecto",
             projects,
@@ -1260,6 +1266,8 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
         )
 
     filtered = df.copy()
+    if selected_place != "Todos":
+        filtered = filtered[filtered["Lugar"] == selected_place].copy()
     if selected_project != "Todos":
         filtered = filtered[filtered["Proyecto"] == selected_project].copy()
 
@@ -1295,7 +1303,12 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
         ),
         unsafe_allow_html=True,
     )
-    render_heatmap_section(df if selected_project == "Todos" else df[df["Proyecto"] == selected_project].copy(), selected_year, selected_month)
+    heatmap_df = df.copy()
+    if selected_place != "Todos":
+        heatmap_df = heatmap_df[heatmap_df["Lugar"] == selected_place].copy()
+    if selected_project != "Todos":
+        heatmap_df = heatmap_df[heatmap_df["Proyecto"] == selected_project].copy()
+    render_heatmap_section(heatmap_df, selected_year, selected_month)
 
     pending_df = filtered[filtered["Firmado"] == 0].copy()
     pending_df = pending_df.sort_values(

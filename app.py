@@ -476,7 +476,7 @@ def aggregate_daily_data(df: pd.DataFrame) -> pd.DataFrame:
                 "firmados": signed,
                 "pendientes": pending,
                 "pending_ratio": pending_ratio,
-                "intensity": pending * 100 + total,
+                "intensity": pending,
                 "project_blocks": project_summary,
                 "torres": towers,
                 "unidades": units,
@@ -535,8 +535,12 @@ def get_visual_bounds(agg_df: pd.DataFrame) -> tuple[int, int]:
     if agg_df.empty:
         return 0, 1
 
-    min_value = int(agg_df["intensity"].min())
-    max_value = int(agg_df["intensity"].max())
+    pending_df = agg_df[agg_df["pendientes"] > 0].copy()
+    if pending_df.empty:
+        return 0, 1
+
+    min_value = int(pending_df["intensity"].min())
+    max_value = int(pending_df["intensity"].max())
 
     if min_value == max_value:
         return min_value, min_value + 1
@@ -701,7 +705,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             "max": visual_max,
             "show": False,
             "inRange": {
-                "color": ["#B5C8E3", "#9AB3D7", "#7F9ECB", "#6489BF", "#4A74B3", "#2F5FA7"],
+                "color": ["#CFDDEF", "#B5C8E3", "#9AB3D7", "#7F9ECB", "#6489BF", "#4A74B3"],
             },
         },
         "graphic": [
@@ -863,7 +867,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "max": visual_max,
             "show": False,
             "inRange": {
-                "color": ["#B5C8E3", "#9AB3D7", "#7F9ECB", "#6489BF", "#4A74B3", "#2F5FA7"],
+                "color": ["#CFDDEF", "#B5C8E3", "#9AB3D7", "#7F9ECB", "#6489BF", "#4A74B3"],
             },
         },
         "calendar": {

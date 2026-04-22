@@ -531,8 +531,21 @@ def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
     return items
 
 
+def get_visual_bounds(agg_df: pd.DataFrame) -> tuple[int, int]:
+    if agg_df.empty:
+        return 0, 1
+
+    min_value = int(agg_df["intensity"].min())
+    max_value = int(agg_df["intensity"].max())
+
+    if min_value == max_value:
+        return min_value, min_value + 1
+
+    return min_value, max_value
+
+
 def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tuple[dict, int]:
-    visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
+    visual_min, visual_max = get_visual_bounds(agg_df)
     first_weekday, days_in_month = monthrange(year, month)
     week_count = (first_weekday + days_in_month + 6) // 7
     week_labels = [f"Semana {index}" for index in range(1, week_count + 1)]
@@ -684,7 +697,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             "splitArea": {"show": False},
         },
         "visualMap": {
-            "min": 0,
+            "min": visual_min,
             "max": visual_max,
             "show": False,
             "inRange": {
@@ -783,7 +796,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
         return build_month_matrix_option(agg_df, year, int(selected_month))
 
     range_value = f"{year}-{selected_month}" if month_selected else str(year)
-    visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
+    visual_min, visual_max = get_visual_bounds(agg_df)
     height = 280
 
     option = {
@@ -846,7 +859,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             }""",
         },
         "visualMap": {
-            "min": 0,
+            "min": visual_min,
             "max": visual_max,
             "show": False,
             "inRange": {

@@ -392,6 +392,44 @@ def compact_unit_labels(values: list[str], max_items: int = 12) -> str:
     return " | ".join(chunks)
 
 
+def summarize_project_group(project: str, group: pd.DataFrame) -> dict:
+    towers = sorted(
+        {
+            str(value).strip()
+            for value in group["Torre_display"].tolist()
+            if str(value).strip() and str(value).strip() != "-"
+        }
+    )
+    apartments = sorted(
+        {
+            format_number(value)
+            for value in group["Apartamento"].dropna().tolist()
+        }
+    )
+    locals_list = sorted(
+        {
+            format_number(value)
+            for value in group["Local"].dropna().tolist()
+        }
+    )
+
+    has_apartments = bool(apartments)
+    project_label = project
+    if has_apartments and towers:
+        project_label = f"{project} · Torre {', '.join(towers[:8])}"
+        if len(towers) > 8:
+            project_label += f" +{len(towers) - 8}"
+
+    return {
+        "proyecto": project_label,
+        "torres": compact_numeric_tokens(towers, "Torres", max_items=10) if towers and not has_apartments else "",
+        "apartamentos": compact_numeric_tokens(apartments, "Apartamentos", max_items=10) if apartments else "",
+        "locales": compact_numeric_tokens(locals_list, "Locales", max_items=10) if locals_list else "",
+        "firmados": int((group["Firmado"] == 1).sum()),
+        "total": int(len(group)),
+    }
+
+
 def get_nearest_date(df: pd.DataFrame) -> pd.Timestamp | None:
     valid_dates = df["Fecha actual"].dropna()
     if valid_dates.empty:
@@ -410,18 +448,9 @@ def aggregate_daily_data(df: pd.DataFrame) -> pd.DataFrame:
     grouped_rows = []
 
     for event_date, group in rows.groupby("Fecha_dia", sort=True):
-        project_summary = (
-            group.groupby("Proyecto", sort=True)
-            .agg(
-                total=("Proyecto", "size"),
-                firmados=("Firmado", lambda s: int((s == 1).sum())),
-                pendientes=("Firmado", lambda s: int((s == 0).sum())),
-            )
-            .reset_index()
-        )
-        project_summary["resumen"] = project_summary.apply(
-            lambda row: f"{row['Proyecto']} ({int(row['total'])})", axis=1
-        )
+        project_summary = []
+        for project_name, project_group in group.groupby("Proyecto", sort=True):
+            project_summary.append(summarize_project_group(str(project_name), project_group))
 
         towers = sorted(
             {
@@ -446,8 +475,7 @@ def aggregate_daily_data(df: pd.DataFrame) -> pd.DataFrame:
                 "pendientes": pending,
                 "pending_ratio": pending_ratio,
                 "intensity": pending * 100 + total,
-                "proyectos": project_summary["resumen"].tolist(),
-                "proyectos_con_pendientes": project_summary.loc[project_summary["pendientes"] > 0, "resumen"].tolist(),
+                "project_blocks": project_summary,
                 "torres": towers,
                 "unidades": units,
                 "torres_resumen": compact_numeric_tokens(towers, "Torres/ZC"),
@@ -482,8 +510,7 @@ def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
             "firmados": int(row["firmados"]),
             "pendientes": int(row["pendientes"]),
             "estado": event_status_label(row),
-            "proyectos": row["proyectos"],
-            "proyectosPendientes": row["proyectos_con_pendientes"],
+            "projectBlocks": row["project_blocks"],
             "torres": row["torres"],
             "unidades": row["unidades"],
             "torresResumen": row["torres_resumen"],
@@ -554,7 +581,21 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             },
         },
         "tooltip": {
-            "position": "top",
+            "confine": True,
+            "extraCssText": "max-width:380px; white-space:normal; box-shadow:0 10px 24px rgba(15,23,42,.28); border-radius:12px;",
+            "position": """__JS__function (point, params, dom, rect, size) {
+                const boxWidth = size.contentSize[0];
+                const boxHeight = size.contentSize[1];
+                const viewWidth = size.viewSize[0];
+                const viewHeight = size.viewSize[1];
+                let x = point[0] + 14;
+                let y = point[1] + 14;
+                if (x + boxWidth > viewWidth - 12) x = point[0] - boxWidth - 14;
+                if (x < 12) x = 12;
+                if (y + boxHeight > viewHeight - 12) y = point[1] - boxHeight - 14;
+                if (y < 12) y = 12;
+                return [x, y];
+            }""",
             "backgroundColor": "#111827",
             "borderColor": "#334155",
             "textStyle": {
@@ -564,23 +605,26 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             },
             "formatter": """__JS__function (params) {
                 const d = params.data || {};
-                const proyectos = (d.proyectos || []).slice(0, 8).join('<br/>• ');
-                const proyectosPendientes = (d.proyectosPendientes || []).slice(0, 8).join('<br/>• ');
-                const torres = d.torresResumen || '-';
-                const unidades = d.unidadesResumen || '-';
+                const blocks = (d.projectBlocks || []).map((block) => {
+                    const lines = [
+                        '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
+                    ];
+                    if (block.torres) lines.push('<div>' + block.torres + '</div>');
+                    if (block.apartamentos) lines.push('<div>' + block.apartamentos + '</div>');
+                    if (block.locales) lines.push('<div>' + block.locales + '</div>');
+                    return '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.22);">'
+                        + lines.join('')
+                        + '</div>';
+                }).join('');
                 return '<div style="font-family:Manrope,sans-serif;line-height:1.5;">'
                     + '<div style="font-weight:800;margin-bottom:6px;">' + (d.fecha || params.value[0]) + '</div>'
                     + '<div>Total CTOs: <b>' + (d.total || 0) + '</b></div>'
                     + '<div>Firmados: <b>' + (d.firmados || 0) + '</b></div>'
-                    + '<div>Pendientes: <b>' + (d.pendientes || 0) + '</b></div>'
-                    + '<div>Estado del día: <b>' + (d.estado || '-') + '</b></div>'
+                    + '<div>' + ((d.allSigned) ? '<span style="color:#A7F3D0;font-weight:800;">Todo firmado</span>' : '<span style="color:#FCA5A5;font-weight:800;">Con firmas pendientes</span>') + '</div>'
                     + '<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
                     + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
                     + '</div>'
-                    + (proyectos ? '<div style="margin-top:8px;"><b>Proyectos:</b><br/>• ' + proyectos + '</div>' : '')
-                    + (proyectosPendientes ? '<div style="margin-top:8px;"><b>Con pendientes:</b><br/>• ' + proyectosPendientes + '</div>' : '')
-                    + (torres && torres !== '-' ? '<div style="margin-top:8px;"><b>' + torres + '</b></div>' : '')
-                    + (unidades && unidades !== '-' ? '<div style="margin-top:6px;"><b>' + unidades + '</b></div>' : '')
+                    + blocks
                     + '</div>';
             }""",
         },
@@ -597,8 +641,14 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "left": 30,
             "right": 20,
             "range": range_value,
-            "cellSize": ["auto", 18 if month_selected else 17],
-            "splitLine": {"show": False},
+            "cellSize": [22, 22] if month_selected else ["auto", 17],
+            "splitLine": {
+                "show": True,
+                "lineStyle": {
+                    "color": "#D7E0EA",
+                    "width": 1,
+                },
+            },
             "itemStyle": {
                 "borderWidth": 1,
                 "borderColor": "#E5E9F0",
@@ -610,6 +660,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
                 "color": "#6B7280",
                 "fontFamily": "Manrope, sans-serif",
                 "fontWeight": 700,
+                "margin": 16,
             },
             "dayLabel": {
                 "firstDay": 0,
@@ -691,7 +742,7 @@ def render_heatmap_section(filtered: pd.DataFrame, selected_year: int, selected_
             )
             return
 
-        left, center, right = st.columns([0.12, 0.76, 0.12])
+        left, center, right = st.columns([0.2, 0.6, 0.2])
         with center:
             option, height = build_heatmap_option(agg_df, selected_year, selected_month)
             render_echarts(option, height=height)

@@ -1,7 +1,7 @@
 import html
 import json
 from calendar import monthrange
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -373,7 +373,11 @@ def get_excel_signature(path: Path) -> tuple[int, int]:
     return stat.st_mtime_ns, stat.st_size
 
 
-def get_excel_updated_at(path: Path) -> datetime:
+def format_spanish_date(dt_value: datetime) -> str:
+    return f"{dt_value.day} de {MONTHS_ES[dt_value.month]} del {dt_value.year} a las {dt_value.strftime('%H:%M')}"
+
+
+def get_excel_last_update_text(path: Path) -> str:
     wb = load_workbook(path, read_only=True)
     try:
         updated_at = wb.properties.modified or wb.properties.created
@@ -381,12 +385,13 @@ def get_excel_updated_at(path: Path) -> datetime:
         wb.close()
 
     if updated_at is None:
-        return datetime.fromtimestamp(path.stat().st_mtime, BOGOTA_TZ)
+        fallback_dt = datetime.fromtimestamp(path.stat().st_mtime, BOGOTA_TZ)
+        return format_spanish_date(fallback_dt)
 
     if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=BOGOTA_TZ)
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
 
-    return updated_at.astimezone(BOGOTA_TZ)
+    return format_spanish_date(updated_at.astimezone(BOGOTA_TZ))
 
 
 def dataframe_to_excel_bytes(data: pd.DataFrame) -> bytes:
@@ -1228,7 +1233,7 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
     with title_col:
         render_page_heading("Certificados Tecnicos de Ocupacion")
         st.markdown(
-            f'<div class="info-note inline-note">Ultima actualizacion: {get_excel_updated_at(EXCEL_PATH).strftime("%d/%m/%Y %H:%M")}</div>',
+            f'<div class="info-note inline-note">Ultima actualizacion: {get_excel_last_update_text(EXCEL_PATH)}</div>',
             unsafe_allow_html=True,
         )
 

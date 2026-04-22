@@ -285,6 +285,18 @@ def inject_base_styles() -> None:
             margin: 0 0 12px 0;
             flex-wrap: wrap;
         }
+        .section-head-download {
+            margin-bottom: 12px;
+        }
+        .section-head-download [data-testid="column"]:last-child {
+            display: flex;
+            justify-content: flex-end;
+            align-items: flex-end;
+        }
+        div[data-testid="stDownloadButton"] {
+            display: flex;
+            justify-content: flex-end;
+        }
         div[data-testid="stDownloadButton"] button {
             background: #EEF3FA !important;
             color: #4A7BA8 !important;
@@ -1291,25 +1303,27 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
         na_position="last",
     )
 
-    export_df = pending_df[["Proyecto", "Torre_display", "Unidad", "Fecha actual", "Fecha anterior"]].copy()
+    export_df = pending_df[["Proyecto", "Torre_display", "Unidad", "Fecha actual"]].copy()
     export_df = export_df.rename(columns={"Torre_display": "Torre / ZC"})
     export_df["Unidad"] = export_df["Unidad"].replace("", "-")
     export_df["Fecha actual"] = export_df["Fecha actual"].apply(format_short_date)
-    export_df["Fecha anterior"] = export_df["Fecha anterior"].apply(format_short_date)
 
-    st.markdown(section_header("CTOs Proyectados"), unsafe_allow_html=True)
-    badge_col, download_col = st.columns([1, 1])
-    with badge_col:
-        st.markdown(
-            f'<div class="table-toolbar"><span class="pill-count">{len(pending_df):,} proyectados</span></div>',
-            unsafe_allow_html=True,
-        )
+    title_table_col, download_col = st.columns([3.5, 1], gap="small")
+    with title_table_col:
+        st.markdown(section_header("CTOs Proyectados"), unsafe_allow_html=True)
     with download_col:
         st.download_button(
             "Descargar Excel",
             data=dataframe_to_excel_bytes(export_df),
             file_name="ctos_proyectados.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    badge_col, _ = st.columns([1, 1])
+    with badge_col:
+        st.markdown(
+            f'<div class="table-toolbar"><span class="pill-count">{len(pending_df):,} proyectados</span></div>',
+            unsafe_allow_html=True,
         )
     st.markdown(build_pending_table_html(pending_df), unsafe_allow_html=True)
 

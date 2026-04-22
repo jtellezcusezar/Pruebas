@@ -1041,8 +1041,8 @@ def render_dashboard(df: pd.DataFrame) -> None:
         st.markdown(
             """
             <div class="legend-wrap">
-                <div class="legend-item"><span class="legend-dot legend-signed"></span>Todo firmado</div>
-                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Mayor presión</div>
+                <div class="legend-item"><span class="legend-dot legend-signed"></span>Firmado</div>
+                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Proyectado</div>
             </div>
             """,
             unsafe_allow_html=True,

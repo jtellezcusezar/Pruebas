@@ -539,6 +539,21 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
     row_positions = {label: idx for idx, label in enumerate(week_labels)}
 
     data = []
+    for week_idx, week_label in enumerate(week_labels):
+        for weekday_idx in range(len(WEEKDAY_LABELS)):
+            data.append(
+                {
+                    "value": [weekday_idx, row_positions[week_label], 0],
+                    "fecha": "",
+                    "emptyCell": True,
+                    "itemStyle": {
+                        "color": "#F8FAFC",
+                        "borderColor": "#D1DAE6",
+                        "borderWidth": 1.2,
+                    },
+                }
+            )
+
     for _, row in agg_df.iterrows():
         current_date = row["Fecha_dia"]
         weekday_idx = current_date.weekday()
@@ -554,6 +569,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             "fechaAnteriorMin": row["fecha_anterior_min"],
             "fechaAnteriorMax": row["fecha_anterior_max"],
             "allSigned": bool(row["all_signed"]),
+            "emptyCell": False,
         }
         if bool(row["all_signed"]):
             item["itemStyle"] = {
@@ -608,6 +624,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             },
             "formatter": """__JS__function (params) {
                 const d = params.data || {};
+                if (d.emptyCell) return '';
                 const blocks = (d.projectBlocks || []).map((block, idx) => {
                     const lines = [
                         '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
@@ -669,7 +686,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
                 "style": {
                     "text": MONTHS_ES[month][:3],
                     "fill": "#6B7280",
-                    "font": "700 14px Manrope",
+                    "font": "700 14px 'Manrope'",
                 },
             }
         ],
@@ -701,6 +718,15 @@ def render_echarts(option: dict, height: int = 420) -> None:
     chart_id = f"echarts-{uuid4().hex}"
     option_json = json.dumps(option, ensure_ascii=False)
     html_code = f"""
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+      html, body {{
+        margin: 0;
+        padding: 0;
+        font-family: 'Manrope', sans-serif;
+        background: transparent;
+      }}
+    </style>
     <div id="{chart_id}" style="width:100%;height:{height}px;"></div>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script>

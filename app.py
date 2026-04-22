@@ -125,6 +125,7 @@ def inject_base_styles() -> None:
             border-radius: 14px 14px 0 0;
         }
         .kp-blue::before { background: #7BA7D4; }
+        .kp-gray::before { background: #9CA3AF; }
         .kp-green::before { background: #6BBF9E; }
         .kp-red::before { background: #D98B8B; }
         .kpi-label {
@@ -147,6 +148,7 @@ def inject_base_styles() -> None:
             color: #9CA3AF;
         }
         .kp-blue .kpi-value { color: #4A7BA8; }
+        .kp-gray .kpi-value { color: #6B7280; }
         .kp-green .kpi-value { color: #3D8B6E; }
         .kp-red .kpi-value { color: #B05B5B; }
         .info-note {
@@ -178,6 +180,12 @@ def inject_base_styles() -> None:
         }
         .kpi-card.compact .kpi-sub {
             display: none;
+        }
+        .kpi-inline-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            width: 100%;
         }
         div[data-testid="stSelectbox"] > label {
             font-size: 11px !important;
@@ -1254,9 +1262,16 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
 
     with kpi_col:
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        st.markdown(kpi_card_compact("Total", f"{total:,}", "kp-blue"), unsafe_allow_html=True)
-        st.markdown(kpi_card_compact("Firmados", f"{signed:,}", "kp-green"), unsafe_allow_html=True)
-        st.markdown(kpi_card_compact("Proyectado", f"{projected:,}", "kp-red"), unsafe_allow_html=True)
+        st.markdown(
+            (
+                '<div class="kpi-inline-row">'
+                f'{kpi_card_compact("Total", f"{total:,}", "kp-gray")}'
+                f'{kpi_card_compact("Firmados", f"{signed:,}", "kp-green")}'
+                f'{kpi_card_compact("Proyectado", f"{projected:,}", "kp-blue")}'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     if selected_month != "Todos":
         filtered = filtered[filtered["Fecha actual"].dt.month == int(selected_month)].copy()

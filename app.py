@@ -534,25 +534,38 @@ def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
 def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tuple[dict, int]:
     visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
     first_weekday, days_in_month = monthrange(year, month)
-    week_count = ((first_weekday + days_in_month - 1) // 7) + 1
+    week_count = (first_weekday + days_in_month + 6) // 7
     week_labels = [f"Semana {index}" for index in range(1, week_count + 1)]
     row_positions = {label: idx for idx, label in enumerate(week_labels)}
 
     data = []
-    for week_idx, week_label in enumerate(week_labels):
-        for weekday_idx in range(len(WEEKDAY_LABELS)):
-            data.append(
-                {
-                    "value": [weekday_idx, row_positions[week_label], 0],
-                    "fecha": "",
-                    "emptyCell": True,
-                    "itemStyle": {
-                        "color": "#F8FAFC",
-                        "borderColor": "#D1DAE6",
-                        "borderWidth": 1.2,
-                    },
-                }
-            )
+    valid_positions = {}
+    for day in range(1, days_in_month + 1):
+        weekday_idx = (first_weekday + day - 1) % 7
+        week_idx = (first_weekday + day - 1) // 7
+        valid_positions[(week_idx, weekday_idx)] = day
+        data.append(
+            {
+                "value": [weekday_idx, row_positions[week_labels[week_idx]], 0],
+                "fecha": f"{day:02d}/{month:02d}/{year}",
+                "emptyCell": True,
+                "itemStyle": {
+                    "color": "#F8FAFC",
+                    "borderColor": "#D1DAE6",
+                    "borderWidth": 1.2,
+                },
+                "label": {
+                    "show": True,
+                    "formatter": str(day),
+                    "color": "#9CA3AF",
+                    "fontFamily": "DM Mono, monospace",
+                    "fontSize": 10,
+                    "fontWeight": 600,
+                    "position": "insideTopLeft",
+                    "padding": [4, 0, 0, 4],
+                },
+            }
+        )
 
     for _, row in agg_df.iterrows():
         current_date = row["Fecha_dia"]
@@ -694,7 +707,16 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             {
                 "type": "heatmap",
                 "data": data,
-                "label": {"show": False},
+                "label": {
+                    "show": True,
+                    "formatter": """__JS__function (params) {
+                        const d = params.data || {};
+                        if (d.emptyCell) {
+                            return params.data.label ? params.data.label.formatter : '';
+                        }
+                        return '';
+                    }""",
+                },
                 "itemStyle": {
                     "borderColor": "#D1DAE6",
                     "borderWidth": 1.2,

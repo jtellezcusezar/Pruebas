@@ -2,6 +2,7 @@ import html
 import json
 from calendar import monthrange
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import load_workbook
+from openpyxl.styles import Font
 from zoneinfo import ZoneInfo
 
 
@@ -55,7 +57,7 @@ def inject_base_styles() -> None:
         }
         .page-head {
             display: flex;
-            align-items: flex-end;
+            align-items: center;
             justify-content: space-between;
             gap: 16px;
             margin: 0 0 18px 0;
@@ -63,7 +65,7 @@ def inject_base_styles() -> None:
             border-bottom: 1px solid #E5E9F0;
         }
         .page-title {
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 800;
             color: #111827;
             line-height: 1.1;
@@ -157,6 +159,26 @@ def inject_base_styles() -> None:
             font-weight: 600;
             margin-bottom: 18px;
         }
+        .info-note.inline-note {
+            display: inline-flex;
+            width: fit-content;
+        }
+        .kpi-card.compact {
+            min-height: auto;
+            padding: 12px 14px;
+            border-radius: 12px;
+        }
+        .kpi-card.compact .kpi-label {
+            font-size: 9px;
+            margin-bottom: 5px;
+        }
+        .kpi-card.compact .kpi-value {
+            font-size: 22px;
+            margin-bottom: 0;
+        }
+        .kpi-card.compact .kpi-sub {
+            display: none;
+        }
         div[data-testid="stSelectbox"] > label {
             font-size: 11px !important;
             font-weight: 700 !important;
@@ -198,7 +220,7 @@ def inject_base_styles() -> None:
             border-radius: 3px;
         }
         .legend-signed { background: #6BBF9E; }
-        .legend-unsigned { background: #D98B8B; }
+        .legend-unsigned { background: #6489BF; }
         .table-shell {
             overflow-x: auto;
             border-radius: 10px;
@@ -247,6 +269,28 @@ def inject_base_styles() -> None:
             font-size: 12px;
             font-weight: 800;
         }
+        .table-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 0 0 12px 0;
+            flex-wrap: wrap;
+        }
+        div[data-testid="stDownloadButton"] button {
+            background: #EEF3FA !important;
+            color: #4A7BA8 !important;
+            border: 1.5px solid #C8DCF0 !important;
+            border-radius: 8px !important;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            padding: 6px 14px !important;
+        }
+        div[data-testid="stDownloadButton"] button:hover {
+            background: #6489BF !important;
+            color: #FFFFFF !important;
+            border-color: #6489BF !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -281,6 +325,15 @@ def kpi_card(label: str, value: str, subtitle: str, tone: str) -> str:
     )
 
 
+def kpi_card_compact(label: str, value: str, tone: str) -> str:
+    return (
+        f'<div class="kpi-card compact {tone}">'
+        f'<div class="kpi-label">{html.escape(label)}</div>'
+        f'<div class="kpi-value">{html.escape(value)}</div>'
+        f"</div>"
+    )
+
+
 def read_excel_table(path: Path, table_name: str) -> pd.DataFrame:
     wb = load_workbook(path, data_only=True, read_only=False)
     try:
@@ -298,6 +351,34 @@ def read_excel_table(path: Path, table_name: str) -> pd.DataFrame:
 def get_excel_signature(path: Path) -> tuple[int, int]:
     stat = path.stat()
     return stat.st_mtime_ns, stat.st_size
+
+
+def get_excel_updated_at(path: Path) -> datetime:
+    wb = load_workbook(path, read_only=True)
+    try:
+        updated_at = wb.properties.modified or wb.properties.created
+    finally:
+        wb.close()
+
+    if updated_at is None:
+        return datetime.fromtimestamp(path.stat().st_mtime, BOGOTA_TZ)
+
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=BOGOTA_TZ)
+
+    return updated_at.astimezone(BOGOTA_TZ)
+
+
+def dataframe_to_excel_bytes(data: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        data.to_excel(writer, index=False, sheet_name="CTOs Proyectados")
+        worksheet = writer.book["CTOs Proyectados"]
+        worksheet.freeze_panes = "A2"
+        for cell in worksheet[1]:
+            cell.font = Font(bold=True)
+    output.seek(0)
+    return output.getvalue()
 
 
 @st.cache_data(show_spinner=False)
@@ -926,7 +1007,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
 
 def build_pending_table_html(data: pd.DataFrame) -> str:
     if data.empty:
-        return '<div class="info-note" style="margin-bottom:0;">No hay CTOs pendientes para los filtros seleccionados.</div>'
+        return '<div class="info-note" style="margin-bottom:0;">No hay CTOs proyectados para los filtros seleccionados.</div>'
 
     rows_html = "".join(
         "<tr>"
@@ -1041,8 +1122,8 @@ def render_dashboard(df: pd.DataFrame) -> None:
         st.markdown(
             """
             <div class="legend-wrap">
-                <div class="legend-item"><span class="legend-dot legend-signed"></span>Firmado</div>
-                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Proyectado</div>
+                <div class="legend-item"><span class="legend-dot legend-signed"></span>Todo firmado</div>
+                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Mayor presión</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1095,6 +1176,129 @@ def render_dashboard(df: pd.DataFrame) -> None:
     st.markdown(build_pending_table_html(pending_df), unsafe_allow_html=True)
 
 
+def render_dashboard_v2(df: pd.DataFrame) -> None:
+    inject_base_styles()
+
+    valid_dates = df["Fecha actual"].dropna()
+    nearest_date = get_nearest_date(df)
+    nearest_year = nearest_date.year if nearest_date is not None else datetime.now(BOGOTA_TZ).year
+    available_years = sorted(valid_dates.dt.year.unique().tolist()) if not valid_dates.empty else [nearest_year]
+    month_options = ["Todos"] + [f"{month:02d}" for month in range(1, 13)]
+    month_labels = {"Todos": "Todos"} | {f"{month:02d}": MONTHS_ES[month] for month in range(1, 13)}
+
+    projects = ["Todos"] + sorted(df["Proyecto"].dropna().unique().tolist())
+    default_project = st.session_state.get("ctos_selected_project", "Todos")
+    if default_project not in projects:
+        default_project = "Todos"
+    default_year = st.session_state.get("ctos_selected_year", nearest_year)
+    if default_year not in available_years:
+        default_year = nearest_year
+    default_month = st.session_state.get("ctos_selected_month", "Todos")
+    if default_month not in month_options:
+        default_month = "Todos"
+
+    title_col, kpi_col = st.columns([2.4, 1.2], gap="large")
+    with title_col:
+        render_page_heading("Certificados Tecnicos de Ocupacion")
+        st.markdown(
+            f'<div class="info-note inline-note">Ultima actualizacion: {get_excel_updated_at(EXCEL_PATH).strftime("%d/%m/%Y %H:%M")}</div>',
+            unsafe_allow_html=True,
+        )
+
+    filter_col, year_col, month_col, legend_col = st.columns(4, gap="small")
+    with filter_col:
+        selected_project = st.selectbox(
+            "Proyecto",
+            projects,
+            index=projects.index(default_project),
+            key="ctos_selected_project",
+        )
+    with year_col:
+        selected_year = st.selectbox(
+            "Año",
+            available_years,
+            index=available_years.index(default_year),
+            key="ctos_selected_year",
+        )
+    with month_col:
+        selected_month = st.selectbox(
+            "Mes",
+            month_options,
+            index=month_options.index(default_month),
+            format_func=lambda value: month_labels[value],
+            key="ctos_selected_month",
+        )
+    with legend_col:
+        st.markdown(
+            """
+            <div class="legend-wrap">
+                <div class="legend-item"><span class="legend-dot legend-signed"></span>Firmado</div>
+                <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Proyectado</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    filtered = df.copy()
+    if selected_project != "Todos":
+        filtered = filtered[filtered["Proyecto"] == selected_project].copy()
+
+    kpi_df = filtered.copy()
+    if selected_month != "Todos":
+        kpi_df = kpi_df[kpi_df["Fecha actual"].dt.year == selected_year].copy()
+        kpi_df = kpi_df[kpi_df["Fecha actual"].dt.month == int(selected_month)].copy()
+
+    total = len(kpi_df)
+    signed = int((kpi_df["Firmado"] == 1).sum())
+    projected = int((kpi_df["Firmado"] == 0).sum())
+
+    with kpi_col:
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.markdown(kpi_card_compact("Total", f"{total:,}", "kp-blue"), unsafe_allow_html=True)
+        st.markdown(kpi_card_compact("Firmados", f"{signed:,}", "kp-green"), unsafe_allow_html=True)
+        st.markdown(kpi_card_compact("Proyectado", f"{projected:,}", "kp-red"), unsafe_allow_html=True)
+
+    if selected_month != "Todos":
+        filtered = filtered[filtered["Fecha actual"].dt.month == int(selected_month)].copy()
+
+    st.markdown(
+        section_header(
+            "Calendario",
+            "Vista anual por defecto. Al elegir un mes, el heatmap cambia a una lectura mensual con detalle agregado por fecha.",
+        ),
+        unsafe_allow_html=True,
+    )
+    render_heatmap_section(df if selected_project == "Todos" else df[df["Proyecto"] == selected_project].copy(), selected_year, selected_month)
+
+    pending_df = filtered[filtered["Firmado"] == 0].copy()
+    pending_df = pending_df.sort_values(
+        ["Fecha actual", "Proyecto", "Torre_display", "Unidad"],
+        na_position="last",
+    )
+
+    export_df = pending_df[["Proyecto", "Torre_display", "Unidad", "Fecha actual", "Fecha anterior"]].copy()
+    export_df = export_df.rename(columns={"Torre_display": "Torre / ZC"})
+    export_df["Unidad"] = export_df["Unidad"].replace("", "-")
+    export_df["Fecha actual"] = export_df["Fecha actual"].apply(format_short_date)
+    export_df["Fecha anterior"] = export_df["Fecha anterior"].apply(format_short_date)
+
+    st.markdown(section_header("CTOs Proyectados"), unsafe_allow_html=True)
+    badge_col, download_col = st.columns([1, 1])
+    with badge_col:
+        st.markdown(
+            f'<div class="table-toolbar"><span class="pill-count">{len(pending_df):,} proyectados</span></div>',
+            unsafe_allow_html=True,
+        )
+    with download_col:
+        st.download_button(
+            "Descargar Excel",
+            data=dataframe_to_excel_bytes(export_df),
+            file_name="ctos_proyectados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    st.markdown(build_pending_table_html(pending_df), unsafe_allow_html=True)
+
+
 def main() -> None:
     if not EXCEL_PATH.exists():
         st.error(f"No se encontro el archivo {EXCEL_PATH.name} en el repositorio.")
@@ -1107,7 +1311,7 @@ def main() -> None:
         st.error(f"No fue posible cargar la informacion de CTOs: {exc}")
         return
 
-    render_dashboard(df)
+    render_dashboard_v2(df)
 
 
 if __name__ == "__main__":

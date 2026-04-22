@@ -688,7 +688,7 @@ def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tu
             "max": visual_max,
             "show": False,
             "inRange": {
-                "color": ["#DCEAF8", "#BED7F1", "#F4DCA4", "#E7A2AA", "#D98B8B"],
+                "color": ["#EAF2FB", "#D7E6F7", "#BDD4F0", "#8EB4E3", "#5C90D2", "#2F5FA7"],
             },
         },
         "graphic": [
@@ -850,7 +850,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "max": visual_max,
             "show": False,
             "inRange": {
-                "color": ["#DCEAF8", "#BED7F1", "#F4DCA4", "#E7A2AA", "#D98B8B"],
+                "color": ["#EAF2FB", "#D7E6F7", "#BDD4F0", "#8EB4E3", "#5C90D2", "#2F5FA7"],
             },
         },
         "calendar": {

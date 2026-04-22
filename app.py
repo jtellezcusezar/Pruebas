@@ -351,6 +351,47 @@ def as_text_list(values: list[str], fallback: str = "-") -> str:
     return ", ".join(clean) if clean else fallback
 
 
+def compact_numeric_tokens(values: list[str], label: str, max_items: int = 12) -> str:
+    clean = [value for value in values if value]
+    if not clean:
+        return "-"
+
+    numeric = []
+    text = []
+    for value in clean:
+        stripped = str(value).strip()
+        try:
+            number = float(stripped)
+            numeric.append(str(int(number)) if number.is_integer() else stripped)
+        except ValueError:
+            text.append(stripped)
+
+    ordered = numeric + sorted(set(text))
+    unique_values = list(dict.fromkeys(ordered))
+    shown = unique_values[:max_items]
+    suffix = f" +{len(unique_values) - max_items}" if len(unique_values) > max_items else ""
+    return f"{label}: {', '.join(shown)}{suffix}"
+
+
+def compact_unit_labels(values: list[str], max_items: int = 12) -> str:
+    clean = [value.strip() for value in values if value and value.strip()]
+    if not clean:
+        return "-"
+
+    groups: dict[str, list[str]] = {}
+    for value in clean:
+        parts = value.split(" ", 1)
+        prefix = parts[0]
+        suffix = parts[1] if len(parts) > 1 else value
+        groups.setdefault(prefix, []).append(suffix)
+
+    chunks = []
+    for prefix, suffixes in groups.items():
+        label = "Locales" if prefix.lower() == "local" else "Aptos" if prefix.lower() == "apto" else prefix
+        chunks.append(compact_numeric_tokens(suffixes, label, max_items=max_items))
+    return " | ".join(chunks)
+
+
 def get_nearest_date(df: pd.DataFrame) -> pd.Timestamp | None:
     valid_dates = df["Fecha actual"].dropna()
     if valid_dates.empty:
@@ -409,8 +450,11 @@ def aggregate_daily_data(df: pd.DataFrame) -> pd.DataFrame:
                 "proyectos_con_pendientes": project_summary.loc[project_summary["pendientes"] > 0, "resumen"].tolist(),
                 "torres": towers,
                 "unidades": units,
+                "torres_resumen": compact_numeric_tokens(towers, "Torres/ZC"),
+                "unidades_resumen": compact_unit_labels(units),
                 "fecha_anterior_min": format_short_date(group["Fecha anterior"].min()),
                 "fecha_anterior_max": format_short_date(group["Fecha anterior"].max()),
+                "all_signed": pending == 0,
             }
         )
 
@@ -431,22 +475,30 @@ def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
 
     items = []
     for _, row in agg_df.iterrows():
-        items.append(
-            {
-                "value": [row["fecha_iso"], int(row["intensity"])],
-                "fecha": row["fecha_label"],
-                "total": int(row["total"]),
-                "firmados": int(row["firmados"]),
-                "pendientes": int(row["pendientes"]),
-                "estado": event_status_label(row),
-                "proyectos": row["proyectos"],
-                "proyectosPendientes": row["proyectos_con_pendientes"],
-                "torres": row["torres"],
-                "unidades": row["unidades"],
-                "fechaAnteriorMin": row["fecha_anterior_min"],
-                "fechaAnteriorMax": row["fecha_anterior_max"],
+        item = {
+            "value": [row["fecha_iso"], int(row["intensity"])],
+            "fecha": row["fecha_label"],
+            "total": int(row["total"]),
+            "firmados": int(row["firmados"]),
+            "pendientes": int(row["pendientes"]),
+            "estado": event_status_label(row),
+            "proyectos": row["proyectos"],
+            "proyectosPendientes": row["proyectos_con_pendientes"],
+            "torres": row["torres"],
+            "unidades": row["unidades"],
+            "torresResumen": row["torres_resumen"],
+            "unidadesResumen": row["unidades_resumen"],
+            "fechaAnteriorMin": row["fecha_anterior_min"],
+            "fechaAnteriorMax": row["fecha_anterior_max"],
+            "allSigned": bool(row["all_signed"]),
+        }
+        if bool(row["all_signed"]):
+            item["itemStyle"] = {
+                "color": "#BFE3CF",
+                "borderColor": "#6BBF9E",
+                "borderWidth": 1.2,
             }
-        )
+        items.append(item)
     return items
 
 
@@ -486,11 +538,21 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
     month_selected = selected_month != "Todos"
     range_value = f"{year}-{selected_month}" if month_selected else str(year)
     visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
-    calendar_height = 240 if month_selected else 180
-    height = 330 if month_selected else 260
+    height = 340 if month_selected else 280
 
     option = {
         "backgroundColor": "rgba(0,0,0,0)",
+        "title": {
+            "text": f"{MONTHS_ES[int(selected_month)]} {year}" if month_selected else str(year),
+            "left": "center",
+            "top": 8,
+            "textStyle": {
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 16,
+                "fontWeight": 800,
+                "color": "#111827",
+            },
+        },
         "tooltip": {
             "position": "top",
             "backgroundColor": "#111827",
@@ -504,8 +566,8 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
                 const d = params.data || {};
                 const proyectos = (d.proyectos || []).slice(0, 8).join('<br/>• ');
                 const proyectosPendientes = (d.proyectosPendientes || []).slice(0, 8).join('<br/>• ');
-                const torres = (d.torres || []).slice(0, 10).join(', ');
-                const unidades = (d.unidades || []).slice(0, 10).join(', ');
+                const torres = d.torresResumen || '-';
+                const unidades = d.unidadesResumen || '-';
                 return '<div style="font-family:Manrope,sans-serif;line-height:1.5;">'
                     + '<div style="font-weight:800;margin-bottom:6px;">' + (d.fecha || params.value[0]) + '</div>'
                     + '<div>Total CTOs: <b>' + (d.total || 0) + '</b></div>'
@@ -517,8 +579,8 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
                     + '</div>'
                     + (proyectos ? '<div style="margin-top:8px;"><b>Proyectos:</b><br/>• ' + proyectos + '</div>' : '')
                     + (proyectosPendientes ? '<div style="margin-top:8px;"><b>Con pendientes:</b><br/>• ' + proyectosPendientes + '</div>' : '')
-                    + (torres ? '<div style="margin-top:8px;"><b>Torres/ZC:</b> ' + torres + '</div>' : '')
-                    + (unidades ? '<div style="margin-top:6px;"><b>Unidades:</b> ' + unidades + '</div>' : '')
+                    + (torres && torres !== '-' ? '<div style="margin-top:8px;"><b>' + torres + '</b></div>' : '')
+                    + (unidades && unidades !== '-' ? '<div style="margin-top:6px;"><b>' + unidades + '</b></div>' : '')
                     + '</div>';
             }""",
         },
@@ -527,15 +589,15 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "max": visual_max,
             "show": False,
             "inRange": {
-                "color": ["#EEF3FA", "#D6E6F7", "#F7E7C6", "#EAB2B7", "#D98B8B"],
+                "color": ["#DCEAF8", "#BED7F1", "#F4DCA4", "#E7A2AA", "#D98B8B"],
             },
         },
         "calendar": {
-            "top": 50,
+            "top": 54,
             "left": 30,
             "right": 20,
             "range": range_value,
-            "cellSize": ["auto", 18 if month_selected else 16],
+            "cellSize": ["auto", 18 if month_selected else 17],
             "splitLine": {"show": False},
             "itemStyle": {
                 "borderWidth": 1,
@@ -608,19 +670,31 @@ def render_heatmap_section(filtered: pd.DataFrame, selected_year: int, selected_
         )
         return
 
-    agg_df = agg_df[agg_df["Fecha_dia"].dt.year == selected_year].copy()
-    if selected_month != "Todos":
+    if selected_month == "Todos":
+        current_year = datetime.now(BOGOTA_TZ).year
+        years_to_render = sorted(year for year in agg_df["Fecha_dia"].dt.year.unique().tolist() if year >= current_year)
+        if not years_to_render:
+            years_to_render = sorted(agg_df["Fecha_dia"].dt.year.unique().tolist())
+
+        for year in years_to_render:
+            year_df = agg_df[agg_df["Fecha_dia"].dt.year == year].copy()
+            option, height = build_heatmap_option(year_df, year, selected_month)
+            render_echarts(option, height=height)
+    else:
+        agg_df = agg_df[agg_df["Fecha_dia"].dt.year == selected_year].copy()
         agg_df = agg_df[agg_df["Fecha_dia"].dt.month == int(selected_month)].copy()
 
-    if agg_df.empty:
-        st.markdown(
-            '<div class="info-note">No hay fechas programadas en el periodo seleccionado.</div>',
-            unsafe_allow_html=True,
-        )
-        return
+        if agg_df.empty:
+            st.markdown(
+                '<div class="info-note">No hay fechas programadas en el periodo seleccionado.</div>',
+                unsafe_allow_html=True,
+            )
+            return
 
-    option, height = build_heatmap_option(agg_df, selected_year, selected_month)
-    render_echarts(option, height=height)
+        left, center, right = st.columns([0.12, 0.76, 0.12])
+        with center:
+            option, height = build_heatmap_option(agg_df, selected_year, selected_month)
+            render_echarts(option, height=height)
 
 
 def render_dashboard(df: pd.DataFrame) -> None:
@@ -682,7 +756,7 @@ def render_dashboard(df: pd.DataFrame) -> None:
         st.markdown(
             """
             <div class="legend-wrap">
-                <div class="legend-item"><span class="legend-dot legend-signed"></span>Menor presión</div>
+                <div class="legend-item"><span class="legend-dot legend-signed"></span>Todo firmado</div>
                 <div class="legend-item"><span class="legend-dot legend-unsigned"></span>Mayor presión</div>
             </div>
             """,
@@ -692,13 +766,18 @@ def render_dashboard(df: pd.DataFrame) -> None:
     filtered = df.copy()
     if selected_project != "Todos":
         filtered = filtered[filtered["Proyecto"] == selected_project].copy()
-    filtered = filtered[filtered["Fecha actual"].dt.year == selected_year].copy()
+
+    kpi_df = filtered.copy()
+    if selected_month != "Todos":
+        kpi_df = kpi_df[kpi_df["Fecha actual"].dt.year == selected_year].copy()
+        kpi_df = kpi_df[kpi_df["Fecha actual"].dt.month == int(selected_month)].copy()
+
+    total = len(kpi_df)
+    signed = int((kpi_df["Firmado"] == 1).sum())
+    pending = int((kpi_df["Firmado"] == 0).sum())
+
     if selected_month != "Todos":
         filtered = filtered[filtered["Fecha actual"].dt.month == int(selected_month)].copy()
-
-    total = len(filtered)
-    signed = int((filtered["Firmado"] == 1).sum())
-    pending = int((filtered["Firmado"] == 0).sum())
 
     c1, c2, c3 = st.columns(3)
     with c1:

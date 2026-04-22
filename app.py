@@ -1053,10 +1053,12 @@ def render_heatmap_section(filtered: pd.DataFrame, selected_year: int, selected_
         return
 
     if selected_month == "Todos":
-        current_year = datetime.now(BOGOTA_TZ).year
-        years_to_render = sorted(year for year in agg_df["Fecha_dia"].dt.year.unique().tolist() if year >= current_year)
+        available_heatmap_years = sorted(agg_df["Fecha_dia"].dt.year.unique().tolist())
+        years_to_render = [year for year in available_heatmap_years if year >= selected_year][:3]
+
         if not years_to_render:
-            years_to_render = sorted(agg_df["Fecha_dia"].dt.year.unique().tolist())
+            years_to_render = [year for year in available_heatmap_years if year <= selected_year]
+            years_to_render = years_to_render[-3:]
 
         for year in years_to_render:
             year_df = agg_df[agg_df["Fecha_dia"].dt.year == year].copy()

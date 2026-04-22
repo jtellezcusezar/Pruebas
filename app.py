@@ -435,8 +435,9 @@ def aggregate_calendar_events(df: pd.DataFrame) -> list[dict]:
 
 
 def build_event_payload(group: pd.DataFrame) -> dict:
-    project = str(group.iloc[0]["Proyecto"])
-    event_date = group.iloc[0]["Fecha actual"].normalize()
+    group_name = getattr(group, "name", ("", pd.NaT))
+    project = str(group_name[0]) if isinstance(group_name, tuple) else str(group_name)
+    event_date = group_name[1] if isinstance(group_name, tuple) and len(group_name) > 1 else group["Fecha actual"].iloc[0].normalize()
     signed_count = int((group["Firmado"] == 1).sum())
     pending_count = int((group["Firmado"] == 0).sum())
     towers = sorted({str(value).strip() for value in group["Torre_display"].tolist() if str(value).strip() and str(value).strip() != "-"})

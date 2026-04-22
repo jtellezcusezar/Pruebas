@@ -1205,7 +1205,15 @@ def render_dashboard_v2(df: pd.DataFrame) -> None:
     month_options = ["Todos"] + [f"{month:02d}" for month in range(1, 13)]
     month_labels = {"Todos": "Todos"} | {f"{month:02d}": MONTHS_ES[month] for month in range(1, 13)}
 
-    projects = ["Todos"] + sorted(df["Proyecto"].dropna().unique().tolist())
+    places = ["Todos"] + sorted([value for value in df["Lugar"].dropna().unique().tolist() if str(value).strip()])
+    projects_base = df.copy()
+    default_place = st.session_state.get("ctos_selected_lugar", "Todos")
+    if default_place not in places:
+        default_place = "Todos"
+    if default_place != "Todos":
+        projects_base = projects_base[projects_base["Lugar"] == default_place].copy()
+
+    projects = ["Todos"] + sorted(projects_base["Proyecto"].dropna().unique().tolist())
     default_project = st.session_state.get("ctos_selected_project", "Todos")
     if default_project not in projects:
         default_project = "Todos"

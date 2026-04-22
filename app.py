@@ -1,5 +1,6 @@
 import html
 import json
+from calendar import monthrange
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -36,6 +37,7 @@ MONTHS_ES = {
 EXCEL_PATH = Path("CTOs.xlsx")
 TABLE_NAME = "CTO"
 BOGOTA_TZ = ZoneInfo("America/Bogota")
+WEEKDAY_LABELS = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
 
 
 def inject_base_styles() -> None:
@@ -529,6 +531,172 @@ def build_heatmap_series(agg_df: pd.DataFrame) -> list[dict]:
     return items
 
 
+def build_month_matrix_option(agg_df: pd.DataFrame, year: int, month: int) -> tuple[dict, int]:
+    visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
+    first_weekday, days_in_month = monthrange(year, month)
+    week_count = ((first_weekday + days_in_month - 1) // 7) + 1
+    week_labels = [f"Semana {index}" for index in range(1, week_count + 1)]
+    row_positions = {label: idx for idx, label in enumerate(week_labels)}
+
+    data = []
+    for _, row in agg_df.iterrows():
+        current_date = row["Fecha_dia"]
+        weekday_idx = current_date.weekday()
+        week_idx = (first_weekday + current_date.day - 1) // 7
+        item = {
+            "value": [weekday_idx, row_positions[week_labels[week_idx]], int(row["intensity"])],
+            "fecha": row["fecha_label"],
+            "total": int(row["total"]),
+            "firmados": int(row["firmados"]),
+            "pendientes": int(row["pendientes"]),
+            "estado": event_status_label(row),
+            "projectBlocks": row["project_blocks"],
+            "fechaAnteriorMin": row["fecha_anterior_min"],
+            "fechaAnteriorMax": row["fecha_anterior_max"],
+            "allSigned": bool(row["all_signed"]),
+        }
+        if bool(row["all_signed"]):
+            item["itemStyle"] = {
+                "color": "#BFE3CF",
+                "borderColor": "#6BBF9E",
+                "borderWidth": 1.2,
+            }
+        data.append(item)
+
+    option = {
+        "backgroundColor": "rgba(0,0,0,0)",
+        "title": {
+            "text": f"{MONTHS_ES[month]} {year}",
+            "left": "center",
+            "top": 8,
+            "textStyle": {
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 16,
+                "fontWeight": 800,
+                "color": "#111827",
+            },
+        },
+        "grid": {
+            "top": 58,
+            "left": 70,
+            "right": 16,
+            "bottom": 18,
+            "containLabel": False,
+        },
+        "tooltip": {
+            "confine": True,
+            "extraCssText": "max-width:380px; white-space:normal; box-shadow:0 10px 24px rgba(15,23,42,.28); border-radius:12px;",
+            "position": """__JS__function (point, params, dom, rect, size) {
+                const boxWidth = size.contentSize[0];
+                const boxHeight = size.contentSize[1];
+                const viewWidth = size.viewSize[0];
+                const viewHeight = size.viewSize[1];
+                let x = point[0] + 14;
+                let y = point[1] + 14;
+                if (x + boxWidth > viewWidth - 12) x = point[0] - boxWidth - 14;
+                if (x < 12) x = 12;
+                if (y + boxHeight > viewHeight - 12) y = point[1] - boxHeight - 14;
+                if (y < 12) y = 12;
+                return [x, y];
+            }""",
+            "backgroundColor": "#111827",
+            "borderColor": "#334155",
+            "textStyle": {
+                "color": "#F8FAFC",
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 12,
+            },
+            "formatter": """__JS__function (params) {
+                const d = params.data || {};
+                const blocks = (d.projectBlocks || []).map((block, idx) => {
+                    const lines = [
+                        '<div style="font-weight:800;color:#F8FAFC;">Proyecto: ' + (block.proyecto || '-') + '</div>'
+                    ];
+                    if (block.torres) lines.push('<div>' + block.torres + '</div>');
+                    if (block.apartamentos) lines.push('<div>' + block.apartamentos + '</div>');
+                    if (block.locales) lines.push('<div>' + block.locales + '</div>');
+                    lines.push('<div>Fecha anterior: <b>' + (d.fechaAnteriorMin || '-') + '</b>'
+                        + ((d.fechaAnteriorMin !== d.fechaAnteriorMax) ? ' a <b>' + (d.fechaAnteriorMax || '-') + '</b>' : '')
+                        + '</div>');
+                    const separator = idx === 0 ? '' : 'margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.28);';
+                    return '<div style="' + separator + '">' + lines.join('') + '</div>';
+                }).join('');
+                return '<div style="font-family:Manrope,sans-serif;line-height:1.5;">'
+                    + '<div style="font-weight:800;margin-bottom:6px;">' + (d.fecha || '-') + '</div>'
+                    + blocks
+                    + '</div>';
+            }""",
+        },
+        "xAxis": {
+            "type": "category",
+            "data": WEEKDAY_LABELS,
+            "position": "top",
+            "axisLine": {"show": False},
+            "axisTick": {"show": False},
+            "axisLabel": {
+                "color": "#6B7280",
+                "fontFamily": "Manrope, sans-serif",
+                "fontSize": 12,
+                "fontWeight": 700,
+                "margin": 12,
+            },
+            "splitArea": {"show": False},
+        },
+        "yAxis": {
+            "type": "category",
+            "data": week_labels,
+            "inverse": True,
+            "axisLine": {"show": False},
+            "axisTick": {"show": False},
+            "axisLabel": {
+                "show": False,
+            },
+            "splitArea": {"show": False},
+        },
+        "visualMap": {
+            "min": 0,
+            "max": visual_max,
+            "show": False,
+            "inRange": {
+                "color": ["#DCEAF8", "#BED7F1", "#F4DCA4", "#E7A2AA", "#D98B8B"],
+            },
+        },
+        "graphic": [
+            {
+                "type": "text",
+                "left": 16,
+                "top": "middle",
+                "style": {
+                    "text": MONTHS_ES[month][:3],
+                    "fill": "#6B7280",
+                    "font": "700 14px Manrope",
+                },
+            }
+        ],
+        "series": [
+            {
+                "type": "heatmap",
+                "data": data,
+                "label": {"show": False},
+                "itemStyle": {
+                    "borderColor": "#D1DAE6",
+                    "borderWidth": 1.2,
+                    "borderRadius": 0,
+                },
+                "emphasis": {
+                    "itemStyle": {
+                        "shadowBlur": 10,
+                        "shadowColor": "rgba(74,123,168,0.25)",
+                        "borderColor": "#4A7BA8",
+                    }
+                },
+            }
+        ],
+    }
+    height = 84 + (week_count * 44)
+    return option, height
+
+
 def render_echarts(option: dict, height: int = 420) -> None:
     chart_id = f"echarts-{uuid4().hex}"
     option_json = json.dumps(option, ensure_ascii=False)
@@ -563,9 +731,12 @@ def render_echarts(option: dict, height: int = 420) -> None:
 
 def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -> tuple[dict, int]:
     month_selected = selected_month != "Todos"
+    if month_selected:
+        return build_month_matrix_option(agg_df, year, int(selected_month))
+
     range_value = f"{year}-{selected_month}" if month_selected else str(year)
     visual_max = max(int(agg_df["intensity"].max()), 1) if not agg_df.empty else 1
-    height = 300 if month_selected else 280
+    height = 280
 
     option = {
         "backgroundColor": "rgba(0,0,0,0)",
@@ -639,7 +810,7 @@ def build_heatmap_option(agg_df: pd.DataFrame, year: int, selected_month: str) -
             "left": 30,
             "right": 20,
             "range": range_value,
-            "cellSize": [22, 22] if month_selected else ["auto", 17],
+            "cellSize": ["auto", 17],
             "splitLine": {
                 "show": True,
                 "lineStyle": {

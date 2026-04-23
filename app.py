@@ -321,17 +321,26 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
         if month_limit <= 0:
             continue
 
+        current_year_projects = (
+            ordered.loc[
+                ordered["CREADA EN"].notna() & ordered["CREADA EN"].dt.year.eq(year),
+                ["CATEGORIA_HEATMAP", "PROYECTO"],
+            ]
+            .drop_duplicates()
+        )
+        if current_year_projects.empty:
+            continue
+
         for month in range(1, month_limit + 1):
             cutoff = pd.Timestamp(datetime(year, month, monthrange(year, month)[1]))
-            created_in_year_until_cutoff = (
+            created_until_cutoff = (
                 ordered["CREADA EN"].notna()
-                & ordered["CREADA EN"].dt.year.eq(year)
                 & (ordered["CREADA EN"] <= cutoff)
             )
             limit_reached = ordered["FECHA LÍMITE"].notna() & (cutoff > ordered["FECHA LÍMITE"])
             limit_pending = ordered["FECHA LÍMITE"].notna() & (cutoff <= ordered["FECHA LÍMITE"])
 
-            action_positive = created_in_year_until_cutoff & (
+            action_positive = created_until_cutoff & (
                 (
                     ordered["ESTADO_NORM"].isin(POSITIVE_STATES)
                     & ordered["FECHA ESTADO"].notna()
@@ -344,7 +353,7 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
                 )
             )
 
-            receptive_no_action = created_in_year_until_cutoff & (
+            receptive_no_action = created_until_cutoff & (
                 (
                     ordered["ESTADO_NORM"].eq("VENCIDA")
                     & ordered["ATENDIDA EN"].isna()
@@ -357,7 +366,7 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
             )
 
             partial_action = (
-                created_in_year_until_cutoff
+                created_until_cutoff
                 & ordered["ESTADO_NORM"].eq("ABIERTA")
                 & limit_pending
             )
@@ -369,17 +378,22 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
                 & ordered["CREADA EN"].dt.month.eq(month)
             )
 
-            month_df = ordered.loc[created_in_year_until_cutoff, ["PROYECTO", "CATEGORIA_HEATMAP"]].copy()
-            month_df["accion_positiva"] = action_positive[created_in_year_until_cutoff].astype(int).to_numpy()
-            month_df["receptiva_sin_accion"] = receptive_no_action[created_in_year_until_cutoff].astype(int).to_numpy()
-            month_df["accion_parcial"] = partial_action[created_in_year_until_cutoff].astype(int).to_numpy()
-            month_df["datos_nuevos_mes"] = new_items[created_in_year_until_cutoff].astype(int).to_numpy()
+            month_df = ordered.loc[created_until_cutoff, ["PROYECTO", "CATEGORIA_HEATMAP"]].copy()
+            month_df["accion_positiva"] = action_positive[created_until_cutoff].astype(int).to_numpy()
+            month_df["receptiva_sin_accion"] = receptive_no_action[created_until_cutoff].astype(int).to_numpy()
+            month_df["accion_parcial"] = partial_action[created_until_cutoff].astype(int).to_numpy()
+            month_df["datos_nuevos_mes"] = new_items[created_until_cutoff].astype(int).to_numpy()
 
             grouped = (
                 month_df.groupby(["CATEGORIA_HEATMAP", "PROYECTO"], as_index=False)[
                     ["accion_positiva", "receptiva_sin_accion", "accion_parcial", "datos_nuevos_mes"]
                 ]
                 .sum()
+            )
+            grouped = grouped.merge(
+                current_year_projects,
+                on=["CATEGORIA_HEATMAP", "PROYECTO"],
+                how="inner",
             )
 
             if grouped.empty:

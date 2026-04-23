@@ -189,6 +189,23 @@ def inject_base_styles() -> None:
             margin-top: -8px;
             margin-bottom: 12px;
         }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            padding: 0 6px 2px 6px;
+            color: #64748B;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .heatmap-legend-bar {
+            flex: 1;
+            min-width: 120px;
+            height: 10px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #B42318 0%, #F97066 25%, #F4E29A 50%, #7BC67B 75%, #157F3B 100%);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -292,9 +309,19 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     records: list[dict] = []
     ordered = df.sort_values(["PROJECT_SORT", "CATEGORIA_HEATMAP"]).copy()
+    today = datetime.now(BOGOTA_TZ)
+    current_year = today.year
+    last_completed_month = max(today.month - 1, 0)
 
     for year in range(min_year, max_year + 1):
-        for month in range(1, 13):
+        if year > current_year:
+            continue
+
+        month_limit = 12 if year < current_year else last_completed_month
+        if month_limit <= 0:
+            continue
+
+        for month in range(1, month_limit + 1):
             cutoff = pd.Timestamp(datetime(year, month, monthrange(year, month)[1]))
             created_in_year_until_cutoff = (
                 ordered["CREADA EN"].notna()
@@ -513,6 +540,7 @@ def build_heatmap_option(
             },
         },
         "visualMap": {
+            "show": False,
             "min": 0,
             "max": 100,
             "calculable": False,
@@ -626,6 +654,19 @@ def get_reference_month_number(year_df: pd.DataFrame, fallback_year: int) -> int
     if fallback_year < today.year:
         return 12
     return max(1, today.month - 1)
+
+
+def render_heatmap_legend() -> None:
+    st.markdown(
+        """
+        <div class="heatmap-legend">
+            <span>0%</span>
+            <div class="heatmap-legend-bar"></div>
+            <span>100%</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 inject_base_styles()
@@ -749,4 +790,5 @@ for column, category in zip((heatmap_col1, heatmap_col2), HEATMAP_CATEGORIES):
                 selected_project=selected_project,
             )
             render_echarts(option, height=chart_height)
+            render_heatmap_legend()
         st.markdown("</div>", unsafe_allow_html=True)

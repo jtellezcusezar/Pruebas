@@ -688,6 +688,96 @@ def render_heatmap_legend() -> None:
     )
 
 
+def format_date_for_table(value: pd.Timestamp) -> str:
+    if pd.isna(value):
+        return ""
+    return value.strftime("%d/%m/%Y")
+
+
+def build_audit_snapshot(
+    df: pd.DataFrame,
+    year: int,
+    month: int,
+    project: str,
+    category: str,
+) -> pd.DataFrame:
+    cutoff = pd.Timestamp(datetime(year, month, monthrange(year, month)[1]))
+    audit_df = df[
+        (df["PROYECTO"] == project)
+        & (df["CATEGORIA_HEATMAP"] == category)
+    ].copy()
+
+    if audit_df.empty:
+        return audit_df
+
+    audit_df["entra_por_creacion"] = audit_df["CREADA EN"].notna() & (audit_df["CREADA EN"] <= cutoff)
+    audit_df["es_accion_positiva"] = audit_df["entra_por_creacion"] & (
+        audit_df["ESTADO_NORM"].isin(POSITIVE_STATES)
+        | (
+            audit_df["ESTADO_NORM"].eq("VENCIDA")
+            & audit_df["ATENDIDA EN"].notna()
+            & (audit_df["ATENDIDA EN"] <= cutoff)
+        )
+    )
+    audit_df["es_receptiva_sin_accion"] = audit_df["entra_por_creacion"] & (
+        (
+            audit_df["ESTADO_NORM"].eq("VENCIDA")
+            & audit_df["ATENDIDA EN"].isna()
+            & audit_df["FECHA LÍMITE"].notna()
+            & (cutoff > audit_df["FECHA LÍMITE"])
+        )
+        | (
+            audit_df["ESTADO_NORM"].eq("ABIERTA")
+            & audit_df["FECHA LÍMITE"].notna()
+            & (cutoff > audit_df["FECHA LÍMITE"])
+        )
+    )
+    audit_df["es_accion_parcial"] = audit_df["entra_por_creacion"] & (
+        audit_df["ESTADO_NORM"].eq("ABIERTA")
+        & audit_df["FECHA LÍMITE"].notna()
+        & (cutoff <= audit_df["FECHA LÍMITE"])
+    )
+    audit_df["dato_nuevo_mes"] = (
+        audit_df["ESTADO_NORM"].eq("ABIERTA")
+        & audit_df["CREADA EN"].notna()
+        & audit_df["CREADA EN"].dt.year.eq(year)
+        & audit_df["CREADA EN"].dt.month.eq(month)
+    )
+    audit_df["clasificacion"] = "No clasifica"
+    audit_df.loc[audit_df["es_accion_positiva"], "clasificacion"] = "Acción positiva"
+    audit_df.loc[audit_df["es_receptiva_sin_accion"], "clasificacion"] = "Receptiva sin acción"
+    audit_df.loc[audit_df["es_accion_parcial"], "clasificacion"] = "Acción parcial"
+
+    ordered_columns = [
+        "NRO.",
+        "PROYECTO",
+        "FASE",
+        "CATEGORIA_HEATMAP",
+        "ESTADO",
+        "CREADA EN",
+        "ATENDIDA EN",
+        "FECHA ESTADO",
+        "FECHA LÍMITE",
+        "entra_por_creacion",
+        "es_accion_positiva",
+        "es_receptiva_sin_accion",
+        "es_accion_parcial",
+        "dato_nuevo_mes",
+        "clasificacion",
+    ]
+    available_columns = [column for column in ordered_columns if column in audit_df.columns]
+    audit_df = audit_df[available_columns].copy()
+
+    for column in ["CREADA EN", "ATENDIDA EN", "FECHA ESTADO", "FECHA LÍMITE"]:
+        if column in audit_df.columns:
+            audit_df[column] = audit_df[column].apply(format_date_for_table)
+
+    if "NRO." in audit_df.columns:
+        audit_df["NRO."] = audit_df["NRO."].fillna("").astype(str)
+
+    return audit_df.sort_values(["clasificacion", "CREADA EN", "NRO."], kind="stable")
+
+
 inject_base_styles()
 
 if not EXCEL_PATH.exists():
@@ -811,3 +901,69 @@ for column, category in zip((heatmap_col1, heatmap_col2), HEATMAP_CATEGORIES):
             render_echarts(option, height=chart_height)
             render_heatmap_legend()
         st.markdown("</div>", unsafe_allow_html=True)
+
+section_header(
+    "Auditoría de cálculo",
+    "Revisa fila a fila cómo se está clasificando cada incidencia para un proyecto, categoría y mes.",
+)
+
+audit_projects = sorted(selected_year_df["proyecto"].dropna().unique().tolist(), key=str.casefold)
+if audit_projects:
+    default_audit_project = selected_project if selected_project != "Todos" and selected_project in audit_projects else audit_projects[0]
+    default_audit_month = reference_month_number
+
+    audit_col1, audit_col2, audit_col3 = st.columns([2.3, 1.1, 1.2])
+    with audit_col1:
+        audit_project = st.selectbox(
+            "Proyecto auditoría",
+            audit_projects,
+            index=audit_projects.index(default_audit_project),
+            key="audit_project",
+        )
+    with audit_col2:
+        audit_category = st.selectbox(
+            "Categoría auditoría",
+            list(HEATMAP_CATEGORIES),
+            index=0,
+            key="audit_category",
+        )
+    with audit_col3:
+        audit_month_name = st.selectbox(
+            "Mes auditoría",
+            [MONTHS_ES[month] for month in range(1, 13)],
+            index=max(0, default_audit_month - 1),
+            key="audit_month",
+        )
+
+    audit_month_number = next(month for month, name in MONTHS_ES.items() if name == audit_month_name)
+    audit_snapshot = build_audit_snapshot(
+        df=incidents_df,
+        year=selected_year,
+        month=audit_month_number,
+        project=audit_project,
+        category=audit_category,
+    )
+
+    if audit_snapshot.empty:
+        st.info("No hay incidencias para esa combinación de proyecto y categoría.")
+    else:
+        audit_positive = int(audit_snapshot["es_accion_positiva"].sum())
+        audit_receptive = int(audit_snapshot["es_receptiva_sin_accion"].sum())
+        audit_partial = int(audit_snapshot["es_accion_parcial"].sum())
+        audit_new = int(audit_snapshot["dato_nuevo_mes"].sum())
+        audit_accumulated = audit_positive + audit_receptive + audit_partial
+        audit_pct = audit_positive / audit_accumulated if audit_accumulated else 0
+
+        audit_kpi_cols = st.columns(5)
+        with audit_kpi_cols[0]:
+            st.markdown(kpi_card("Acción positiva", str(audit_positive), "Conteo auditoría", "kp-green"), unsafe_allow_html=True)
+        with audit_kpi_cols[1]:
+            st.markdown(kpi_card("Receptiva sin acción", str(audit_receptive), "Conteo auditoría", "kp-amber"), unsafe_allow_html=True)
+        with audit_kpi_cols[2]:
+            st.markdown(kpi_card("Acción parcial", str(audit_partial), "Conteo auditoría", "kp-blue"), unsafe_allow_html=True)
+        with audit_kpi_cols[3]:
+            st.markdown(kpi_card("Acumulado", str(audit_accumulated), "Conteo auditoría", "kp-slate"), unsafe_allow_html=True)
+        with audit_kpi_cols[4]:
+            st.markdown(kpi_card("% atendidas", format_pct(audit_pct), f"Datos nuevos: {audit_new}", "kp-green"), unsafe_allow_html=True)
+
+        st.dataframe(audit_snapshot, use_container_width=True, hide_index=True)

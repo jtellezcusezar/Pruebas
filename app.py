@@ -343,8 +343,6 @@ def build_monthly_metrics(df: pd.DataFrame) -> pd.DataFrame:
             action_positive = created_until_cutoff & (
                 (
                     ordered["ESTADO_NORM"].isin(POSITIVE_STATES)
-                    & ordered["FECHA ESTADO"].notna()
-                    & (ordered["FECHA ESTADO"] <= cutoff)
                 )
                 | (
                     ordered["ESTADO_NORM"].eq("VENCIDA")

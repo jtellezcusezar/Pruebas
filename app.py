@@ -541,6 +541,7 @@ def build_heatmap_option(
         },
         "visualMap": {
             "show": False,
+            "dimension": 2,
             "min": 0,
             "max": 100,
             "calculable": False,
@@ -563,6 +564,12 @@ def build_heatmap_option(
             {
                 "name": f"{category_name} {year}",
                 "type": "heatmap",
+                "encode": {
+                    "x": 0,
+                    "y": 1,
+                    "value": 2,
+                    "tooltip": [2, 3, 4, 5, 6, 7],
+                },
                 "data": [
                     {
                         **item,
